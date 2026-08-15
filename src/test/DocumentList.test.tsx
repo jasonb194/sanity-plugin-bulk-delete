@@ -53,7 +53,7 @@ describe('DocumentList', () => {
     expect(checkboxes).toHaveLength(sampleDocs.length)
   })
 
-  it('calls handleSelectDoc when a checkbox changes', () => {
+  it('calls handleSelectDoc when a document row is clicked', () => {
     const handleSelectDoc = vi.fn()
     render(<DocumentList {...defaultProps} handleSelectDoc={handleSelectDoc} />)
     fireEvent.click(screen.getByText('First Post'))
