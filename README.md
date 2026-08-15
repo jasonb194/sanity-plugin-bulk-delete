@@ -1,6 +1,6 @@
 # BulkDelete
 
-BulkDelete is a Sanity Studio v3/4 tool plugin that allows administrators (and optionally other roles) to safely bulk delete documents of a selected type from your dataset. It prevents deletion of documents that are strongly referenced elsewhere, and provides a clear UI for selecting, reviewing, and confirming deletions.
+BulkDelete is a Sanity Studio v3-v6 tool plugin that allows administrators (and optionally other roles) to safely bulk delete documents of a selected type from your dataset. It prevents deletion of documents that are strongly referenced elsewhere, and provides a clear UI for selecting, reviewing, and confirming deletions.
 
 ## Features
 
@@ -18,6 +18,8 @@ BulkDelete is a Sanity Studio v3/4 tool plugin that allows administrators (and o
    ```sh
    npm install sanity-plugin-bulk-delete
    ```
+
+   Supported Sanity peer versions: `^3`, `^4`, `^5`, and `^6`.
 
 2. Add the plugin to your `sanity.config.ts`:
 
@@ -45,10 +47,16 @@ BulkDelete is a Sanity Studio v3/4 tool plugin that allows administrators (and o
 
 ## Configuration
 
-| Option      | Type     | Description                                                                 |
-|-------------|----------|-----------------------------------------------------------------------------|
-| schemaTypes | array    | Required. List of schema types (usually from your schema export).           |
-| roles       | string[] | Optional. Array of role names allowed to use the tool. Defaults to admin.   |
+| Option      | Type     | Description                                                               |
+| ----------- | -------- | ------------------------------------------------------------------------- |
+| schemaTypes | array    | Required. List of schema types (usually from your schema export).         |
+| roles       | string[] | Optional. Array of role names allowed to use the tool. Defaults to admin. |
+
+## Compatibility
+
+- Supports Sanity Studio `3.x`, `4.x`, `5.x`, and `6.x`
+- Uses stable plugin entrypoints compatible with `sanity.config.ts`
+- Adapts to Studio perspective APIs when available and falls back to published documents when they are not exposed by the running Studio version
 
 ## Security
 
@@ -65,5 +73,5 @@ BulkDelete is a Sanity Studio v3/4 tool plugin that allows administrators (and o
 MIT
 
 ---
-**Note:** Use with caution. Deleted documents cannot be recovered unless you have backups or use Sanity's history/versioning features.
 
+**Note:** Use with caution. Deleted documents cannot be recovered unless you have backups or use Sanity's history/versioning features.

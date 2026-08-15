@@ -1,12 +1,57 @@
-import React, { useEffect, useState, useCallback } from 'react'
-import { useCurrentUser, useClient, usePerspective, isString } from 'sanity'
-import { Button, Card, Flex, Spinner, Stack, Text, useToast } from '@sanity/ui'
-import { defineQuery } from 'groq'
-import type { BulkDeleteToolOptions } from '../types/BulkDeleteComponent.types'
-import { PermissionNotice } from './PermissionNotice'
-import { DocumentTypeSelect } from './DocumentTypeSelect'
-import { DocumentList } from './DocumentList'
-import { ConfirmDeleteDialog } from './ConfirmDeleteDialog'
+import {Button, Card, Flex, Spinner, Stack, Text, useToast} from '@sanity/ui'
+import {defineQuery} from 'groq'
+import {useCallback, useEffect, useState} from 'react'
+import * as Sanity from 'sanity'
+
+import type {BulkDeleteToolOptions} from '../types/BulkDeleteComponent.types'
+import {ConfirmDeleteDialog} from './ConfirmDeleteDialog'
+import {DocumentList} from './DocumentList'
+import {DocumentTypeSelect} from './DocumentTypeSelect'
+import {PermissionNotice} from './PermissionNotice'
+
+const API_VERSION = '2024-01-01'
+
+type BulkDeleteDocument = {
+  _id: string
+  _type: string
+  hasWeakReferences?: boolean
+  name?: string
+  title?: string
+}
+
+type DocumentTypeOption = {
+  name: string
+  title: string
+}
+
+type PerspectiveState = {
+  selectedPerspective?: unknown
+  selectedPerspectiveName?: string
+}
+
+function getPerspectiveName(perspective: PerspectiveState | undefined) {
+  if (typeof perspective?.selectedPerspectiveName === 'string') {
+    return perspective.selectedPerspectiveName
+  }
+
+  if (typeof perspective?.selectedPerspective === 'string') {
+    return perspective.selectedPerspective
+  }
+
+  return 'published'
+}
+
+function getPerspectiveMatch(perspectiveName: string) {
+  if (perspectiveName === 'published') {
+    return '!(_id in path("drafts.**") || _id in path("versions.**")) &&'
+  }
+
+  if (perspectiveName === 'drafts') {
+    return '(_id in path("drafts.**")) &&'
+  }
+
+  return `(_id in path("versions.${perspectiveName}.**")) &&`
+}
 
 /**
  * BulkDeleteComponent provides a UI for bulk deleting documents in Sanity Studio.
@@ -15,73 +60,70 @@ import { ConfirmDeleteDialog } from './ConfirmDeleteDialog'
  * @public
  */
 export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
-  const { schemaTypes } = config || {}
-  const [docTypes, setDocTypes] = useState<{ name: string; title: string }[]>([])
+  const {schemaTypes} = config || {}
+  const [docTypes, setDocTypes] = useState<DocumentTypeOption[]>([])
   const [selectedType, setSelectedType] = useState<string>('')
-  const [selectedDocs, setSelectedDocs] = useState<Set<{ _id: string; _type: string }>>(new Set())
+  const [selectedDocs, setSelectedDocs] = useState<Set<{_id: string; _type: string}>>(new Set())
   const [loading, setLoading] = useState(false)
-  const [documentsData, setDocumentsData] = useState<any[]>([])
-  const [typesData, setTypesData] = useState<any[]>([])
+  const [documentsData, setDocumentsData] = useState<BulkDeleteDocument[]>([])
+  const [typesData, setTypesData] = useState<string[]>([])
   const [_, forceRender] = useState(0)
-  const [stronglyReferencedDocs, setStronglyReferencedDocs] = useState<any[]>([])
+  const [stronglyReferencedDocs, setStronglyReferencedDocs] = useState<BulkDeleteDocument[]>([])
   const [showConfirm, setShowConfirm] = useState(false)
-  const currentUser = useCurrentUser()
-  const perspective = usePerspective()
-  const perspectiveName = perspective.selectedPerspectiveName || perspective.selectedPerspective
-  const sanityClient = useClient({ apiVersion: '2025-05-29' })
+  const currentUser = Sanity.useCurrentUser()
+  const perspective = Sanity.usePerspective?.() as PerspectiveState | undefined
+  const perspectiveName = getPerspectiveName(perspective)
+  const sanityClient = Sanity.useClient({apiVersion: API_VERSION})
   const toast = useToast()
+  const allowedRoles = config.roles
+    ? Array.from(new Set([...config.roles, 'administrator']))
+    : ['administrator']
+  const isAdmin = currentUser?.roles?.some(
+    (role) => role.name === 'administrator' || config.roles?.includes(role.name),
+  )
 
   // Compute GROQ filter for the current perspective
-  const perspectiveMatch =
-    perspectiveName === 'published'
-      ? `!(_id in path("drafts.**") || _id in path("versions.**")) &&`
-      : perspectiveName === 'drafts'
-        ? `(_id in path("drafts.**")) &&`
-        : isString(perspectiveName)
-          ? `(_id in path("versions.${perspectiveName}.**")) &&`
-          : ''
-
-  // Permission check
-  const isAdmin = currentUser?.roles?.some(
-    (role: any) => role.name === 'administrator' || config.roles?.includes(role.name)
-  )
-  if (!isAdmin) {
-    const roles = config.roles ? Array.from(new Set([...config.roles, 'administrator'])) : ['administrator']
-    return <PermissionNotice roles={roles} />
-  }
+  const perspectiveMatch = getPerspectiveMatch(perspectiveName)
 
   // Helper to fetch documents by reference count
-  const fetchDocuments = async ({
-    type,
-    hasStrongRefs,
-  }: {
-    type: string
-    hasStrongRefs: boolean
-  }) => {
-    const refCountCondition = hasStrongRefs
-      ? 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) > 0'
-      : 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) == 0'
-    const extraFields = hasStrongRefs
-      ? ''
-      : ', "hasWeakReferences": count(*[references(^._id) && defined(_weak) && _weak == true]) > 0'
-    const query = defineQuery(
-      `*[ ${perspectiveMatch} _type == "${type}" && ${refCountCondition}]{_id, _type, title, name${extraFields}}`
-    )
-    return sanityClient.fetch(query, {}, { perspective: 'raw' })
-  }
+  const fetchDocuments = useCallback(
+    async ({
+      type,
+      hasStrongRefs,
+    }: {
+      type: string
+      hasStrongRefs: boolean
+    }): Promise<BulkDeleteDocument[]> => {
+      const refCountCondition = hasStrongRefs
+        ? 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) > 0'
+        : 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) == 0'
+      const extraFields = hasStrongRefs
+        ? ''
+        : ', "hasWeakReferences": count(*[references(^._id) && defined(_weak) && _weak == true]) > 0'
+      const query = defineQuery(
+        `*[ ${perspectiveMatch} _type == "${type}" && ${refCountCondition}]{_id, _type, title, name${extraFields}}`,
+      )
+      return sanityClient.fetch(query, {}, {perspective: 'raw'})
+    },
+    [perspectiveMatch, sanityClient],
+  )
 
   // Fetch all unique document types from the dataset
   useEffect(() => {
+    if (!isAdmin) return
+
     const fetchTypes = async () => {
       const query = defineQuery(`array::unique(*[]._type)`)
-      const data = await sanityClient.fetch(query, {}, { perspective: 'raw' })
+      const data = await sanityClient.fetch(query, {}, {perspective: 'raw'})
       setTypesData(data)
     }
     fetchTypes()
-  }, [sanityClient])
+  }, [isAdmin, sanityClient])
 
   // Fetch documents of the selected type
   useEffect(() => {
+    if (!isAdmin) return
+
     if (!selectedType) {
       setDocumentsData([])
       setStronglyReferencedDocs([])
@@ -89,62 +131,65 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     }
     setLoading(true)
     Promise.all([
-      fetchDocuments({ type: selectedType, hasStrongRefs: false }),
-      fetchDocuments({ type: selectedType, hasStrongRefs: true }),
+      fetchDocuments({type: selectedType, hasStrongRefs: false}),
+      fetchDocuments({type: selectedType, hasStrongRefs: true}),
     ])
       .then(([docs, strongRefs]) => {
         setDocumentsData(docs)
         setStronglyReferencedDocs(strongRefs)
       })
       .finally(() => setLoading(false))
-  }, [selectedType, sanityClient, perspectiveMatch, _])
+  }, [_, fetchDocuments, isAdmin, selectedType])
 
   // Compute the list of document types available for deletion
   useEffect(() => {
+    if (!isAdmin) return
+
     const types =
       schemaTypes
-        ?.filter((type: any) => type.type === 'document' && !type.hidden)
-        .map((type: any) => ({
+        ?.filter((type) => type.type === 'document' && !type.hidden)
+        .map((type) => ({
           name: type.name,
           title: type.title || type.name,
         }))
         .sort((a, b) => a.title.localeCompare(b.title)) || []
-    const typesFromQuery = (typesData as string[]).map(name => ({
+    const typesFromQuery = typesData.map((name) => ({
       name,
       title: `Not Found in Schema - ${name}`,
     }))
     const mergedTypes = [
       ...types,
-      ...typesFromQuery.filter(tq => !types.some(t => t.name === tq.name)),
-    ].filter(type => !type.name.includes('.'))
+      ...typesFromQuery.filter((tq) => !types.some((t) => t.name === tq.name)),
+    ].filter((type) => !type.name.includes('.'))
     setDocTypes(mergedTypes)
-  }, [typesData, schemaTypes])
+  }, [isAdmin, typesData, schemaTypes])
 
   // Checks if a document is currently selected
   const isDocSelected = useCallback(
-    (doc: any) => Array.from(selectedDocs).some(h => h._id === doc._id && h._type === doc._type),
-    [selectedDocs]
+    (doc: BulkDeleteDocument) =>
+      Array.from(selectedDocs).some((h) => h._id === doc._id && h._type === doc._type),
+    [selectedDocs],
   )
 
   // Handles selecting or deselecting a single document
   const handleSelectDoc = useCallback(
     (id: string) => {
-      setSelectedDocs(prev => {
-        const doc = documentsData.find(d => d._id === id)
+      setSelectedDocs((prev) => {
+        const doc = documentsData.find((d) => d._id === id)
         if (!doc) return prev
-        const exists = Array.from(prev).some(h => h._id === doc._id && h._type === doc._type)
+        const exists = Array.from(prev).some((h) => h._id === doc._id && h._type === doc._type)
         const newSet = new Set(prev)
         if (exists) {
-          Array.from(newSet).forEach(h => {
+          Array.from(newSet).forEach((h) => {
             if (h._id === doc._id && h._type === doc._type) newSet.delete(h)
           })
         } else {
-          newSet.add({ _id: doc._id, _type: doc._type })
+          newSet.add({_id: doc._id, _type: doc._type})
         }
         return newSet
       })
     },
-    [documentsData]
+    [documentsData],
   )
 
   // Handles selecting or deselecting all documents in the current list
@@ -152,7 +197,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     if (selectedDocs.size === documentsData.length) {
       setSelectedDocs(new Set())
     } else {
-      setSelectedDocs(new Set(documentsData.map(doc => ({ _id: doc._id, _type: doc._type }))))
+      setSelectedDocs(new Set(documentsData.map((doc) => ({_id: doc._id, _type: doc._type}))))
     }
   }, [selectedDocs, documentsData])
 
@@ -163,32 +208,43 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     setLoading(true)
     try {
       const tx = sanityClient.transaction()
-      Array.from(selectedDocs).forEach(doc => {
+      Array.from(selectedDocs).forEach((doc) => {
         tx.delete(doc._id)
       })
       await tx.commit()
       toast.push({
-                status: 'success',
-                title: `${selectedDocs.size} Documents Deleted`
-            })
+        status: 'success',
+        title: `${selectedDocs.size} Documents Deleted`,
+      })
       setSelectedDocs(new Set())
       // Refresh documents after deletion
-      const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })
+      const docs = await fetchDocuments({type: selectedType, hasStrongRefs: false})
       setDocumentsData(docs)
     } catch (e) {
       toast.push({
         status: 'error',
         title: 'Error Deleting Documents',
-        description: e instanceof Error ? e.message : String(e)
+        description: e instanceof Error ? e.message : String(e),
       })
       console.error('Error deleting documents:', e)
     } finally {
       setLoading(false)
     }
-  }, [selectedDocs, sanityClient, selectedType, documentsData, perspectiveMatch])
+  }, [fetchDocuments, selectedDocs, sanityClient, selectedType, toast])
+
+  if (!isAdmin) {
+    return <PermissionNotice roles={allowedRoles} />
+  }
+
+  let selectAllButtonText = 'Select All'
+  if (documentsData.length === 0) {
+    selectAllButtonText = 'No Documents Found'
+  } else if (selectedDocs.size === documentsData.length) {
+    selectAllButtonText = 'Deselect All'
+  }
 
   return (
-    <Card padding={4} radius={3} shadow={1} style={{ maxWidth: 500, margin: '2rem auto' }}>
+    <Card padding={4} radius={3} shadow={1} style={{maxWidth: 500, margin: '2rem auto'}}>
       <Stack space={4}>
         <Text size={2} weight="semibold">
           Bulk Delete Documents
@@ -197,7 +253,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
           docTypes={docTypes}
           selectedType={selectedType}
           setSelectedType={setSelectedType}
-          forceRender={() => forceRender(n => n + 1)}
+          forceRender={() => forceRender((n) => n + 1)}
         />
         {loading && (
           <Flex align="center" gap={2}>
@@ -212,13 +268,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
               tone="primary"
               onClick={handleSelectAll}
               disabled={documentsData.length === 0}
-              text={
-                documentsData.length === 0
-                  ? 'No Documents Found'
-                  : selectedDocs.size === documentsData.length
-                    ? 'Deselect All'
-                    : 'Select All'
-              }
+              text={selectAllButtonText}
             />
             <DocumentList
               documentsData={documentsData}
