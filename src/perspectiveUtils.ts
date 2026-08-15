@@ -1,4 +1,4 @@
-type PerspectiveState = {
+export type PerspectiveState = {
   selectedPerspective?: unknown
   selectedPerspectiveName?: string
 }

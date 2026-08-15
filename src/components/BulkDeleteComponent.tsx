@@ -4,7 +4,7 @@ import {useCallback, useEffect, useState} from 'react'
 import * as Sanity from 'sanity'
 
 import type {BulkDeleteToolOptions} from '../types/BulkDeleteComponent.types'
-import {getPerspectiveMatch, getPerspectiveName} from '../perspectiveUtils'
+import {getPerspectiveMatch, getPerspectiveName, type PerspectiveState} from '../perspectiveUtils'
 import {ConfirmDeleteDialog} from './ConfirmDeleteDialog'
 import {DocumentList} from './DocumentList'
 import {DocumentTypeSelect} from './DocumentTypeSelect'
@@ -23,11 +23,6 @@ type BulkDeleteDocument = {
 type DocumentTypeOption = {
   name: string
   title: string
-}
-
-type PerspectiveState = {
-  selectedPerspective?: unknown
-  selectedPerspectiveName?: string
 }
 
 const sanityWithOptionalPerspective = Sanity as typeof Sanity & {
