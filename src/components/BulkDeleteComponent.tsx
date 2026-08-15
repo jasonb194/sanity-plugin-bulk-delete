@@ -4,6 +4,7 @@ import {useCallback, useEffect, useState} from 'react'
 import * as Sanity from 'sanity'
 
 import type {BulkDeleteToolOptions} from '../types/BulkDeleteComponent.types'
+import {getPerspectiveMatch, getPerspectiveName} from '../perspectiveUtils'
 import {ConfirmDeleteDialog} from './ConfirmDeleteDialog'
 import {DocumentList} from './DocumentList'
 import {DocumentTypeSelect} from './DocumentTypeSelect'
@@ -29,11 +30,6 @@ type PerspectiveState = {
   selectedPerspectiveName?: string
 }
 
-type PerspectiveFilter = {
-  match: string
-  perspectivePath?: string
-}
-
 const sanityWithOptionalPerspective = Sanity as typeof Sanity & {
   usePerspective?: () => PerspectiveState
 }
@@ -42,33 +38,6 @@ const usePerspectiveCompat: () => PerspectiveState | undefined =
   typeof sanityWithOptionalPerspective.usePerspective === 'function'
     ? sanityWithOptionalPerspective.usePerspective
     : () => undefined
-
-function getPerspectiveName(perspective: PerspectiveState | undefined) {
-  if (typeof perspective?.selectedPerspectiveName === 'string') {
-    return perspective.selectedPerspectiveName
-  }
-
-  if (typeof perspective?.selectedPerspective === 'string') {
-    return perspective.selectedPerspective
-  }
-
-  return 'published'
-}
-
-function getPerspectiveMatch(perspectiveName: string): PerspectiveFilter {
-  if (perspectiveName === 'published') {
-    return {match: '!(_id in path("drafts.**") || _id in path("versions.**")) &&'}
-  }
-
-  if (perspectiveName === 'drafts') {
-    return {match: '(_id in path("drafts.**")) &&'}
-  }
-
-  return {
-    match: '(_id in path($perspectivePath)) &&',
-    perspectivePath: `versions.${perspectiveName}.**`,
-  }
-}
 
 /**
  * BulkDeleteComponent provides a UI for bulk deleting documents in Sanity Studio.
