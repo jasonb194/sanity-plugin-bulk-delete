@@ -29,6 +29,20 @@ type PerspectiveState = {
   selectedPerspectiveName?: string
 }
 
+type PerspectiveFilter = {
+  match: string
+  perspectivePath?: string
+}
+
+const sanityWithOptionalPerspective = Sanity as typeof Sanity & {
+  usePerspective?: () => PerspectiveState
+}
+
+const usePerspectiveCompat: () => PerspectiveState | undefined =
+  typeof sanityWithOptionalPerspective.usePerspective === 'function'
+    ? sanityWithOptionalPerspective.usePerspective
+    : () => undefined
+
 function getPerspectiveName(perspective: PerspectiveState | undefined) {
   if (typeof perspective?.selectedPerspectiveName === 'string') {
     return perspective.selectedPerspectiveName
@@ -41,16 +55,19 @@ function getPerspectiveName(perspective: PerspectiveState | undefined) {
   return 'published'
 }
 
-function getPerspectiveMatch(perspectiveName: string) {
+function getPerspectiveMatch(perspectiveName: string): PerspectiveFilter {
   if (perspectiveName === 'published') {
-    return '!(_id in path("drafts.**") || _id in path("versions.**")) &&'
+    return {match: '!(_id in path("drafts.**") || _id in path("versions.**")) &&'}
   }
 
   if (perspectiveName === 'drafts') {
-    return '(_id in path("drafts.**")) &&'
+    return {match: '(_id in path("drafts.**")) &&'}
   }
 
-  return `(_id in path("versions.${perspectiveName}.**")) &&`
+  return {
+    match: '(_id in path($perspectivePath)) &&',
+    perspectivePath: `versions.${perspectiveName}.**`,
+  }
 }
 
 /**
@@ -71,7 +88,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const [stronglyReferencedDocs, setStronglyReferencedDocs] = useState<BulkDeleteDocument[]>([])
   const [showConfirm, setShowConfirm] = useState(false)
   const currentUser = Sanity.useCurrentUser()
-  const perspective = Sanity.usePerspective?.() as PerspectiveState | undefined
+  const perspective = usePerspectiveCompat()
   const perspectiveName = getPerspectiveName(perspective)
   const sanityClient = Sanity.useClient({apiVersion: API_VERSION})
   const toast = useToast()
@@ -83,7 +100,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   )
 
   // Compute GROQ filter for the current perspective
-  const perspectiveMatch = getPerspectiveMatch(perspectiveName)
+  const perspectiveFilter = getPerspectiveMatch(perspectiveName)
 
   // Helper to fetch documents by reference count
   const fetchDocuments = useCallback(
@@ -101,11 +118,14 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         ? ''
         : ', "hasWeakReferences": count(*[references(^._id) && defined(_weak) && _weak == true]) > 0'
       const query = defineQuery(
-        `*[ ${perspectiveMatch} _type == "${type}" && ${refCountCondition}]{_id, _type, title, name${extraFields}}`,
+        `*[ ${perspectiveFilter.match} _type == $type && ${refCountCondition}]{_id, _type, title, name${extraFields}}`,
       )
-      return sanityClient.fetch(query, {}, {perspective: 'raw'})
+      const params = perspectiveFilter.perspectivePath
+        ? {perspectivePath: perspectiveFilter.perspectivePath, type}
+        : {type}
+      return sanityClient.fetch(query, params, {perspective: 'raw'})
     },
-    [perspectiveMatch, sanityClient],
+    [perspectiveFilter, sanityClient],
   )
 
   // Fetch all unique document types from the dataset
