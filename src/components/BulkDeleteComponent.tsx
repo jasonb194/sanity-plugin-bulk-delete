@@ -1,6 +1,6 @@
 import {Button, Card, Flex, Spinner, Stack, Text, useToast} from '@sanity/ui'
 import {defineQuery} from 'groq'
-import {useCallback, useEffect, useState} from 'react'
+import {useCallback, useEffect, useMemo, useState} from 'react'
 import * as Sanity from 'sanity'
 
 import type {BulkDeleteToolOptions} from '../types/BulkDeleteComponent.types'
@@ -10,7 +10,7 @@ import {DocumentList} from './DocumentList'
 import {DocumentTypeSelect} from './DocumentTypeSelect'
 import {PermissionNotice} from './PermissionNotice'
 
-const API_VERSION = '2024-01-01'
+const API_VERSION = '2025-05-29'
 
 type BulkDeleteDocument = {
   _id: string
@@ -64,7 +64,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   )
 
   // Compute GROQ filter for the current perspective
-  const perspectiveFilter = getPerspectiveMatch(perspectiveName)
+  const perspectiveFilter = useMemo(() => getPerspectiveMatch(perspectiveName), [perspectiveName])
 
   // Helper to fetch documents by reference count
   const fetchDocuments = useCallback(
