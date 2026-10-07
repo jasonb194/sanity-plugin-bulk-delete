@@ -335,6 +335,128 @@ describe('BulkDeleteComponent permission hooks', () => {
     expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy()
   })
 
+  it('ignores an obsolete document fetch without clearing the active scope loading state', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+
+    let resolveOldPerspective!: (docs: {_id: string; _type: string; title: string}[]) => void
+    const pendingOldPerspective = new Promise<{_id: string; _type: string; title: string}[]>(
+      (resolve) => {
+        resolveOldPerspective = resolve
+      },
+    )
+    let resolveCurrentPerspectiveDocs!: (
+      docs: {_id: string; _type: string; title: string}[],
+    ) => void
+    let resolveCurrentPerspectiveStrongRefs!: (
+      docs: {_id: string; _type: string; title: string}[],
+    ) => void
+    const pendingCurrentPerspectiveDocs = new Promise<
+      {_id: string; _type: string; title: string}[]
+    >((resolve) => {
+      resolveCurrentPerspectiveDocs = resolve
+    })
+    const pendingCurrentPerspectiveStrongRefs = new Promise<
+      {_id: string; _type: string; title: string}[]
+    >((resolve) => {
+      resolveCurrentPerspectiveStrongRefs = resolve
+    })
+    const defaultFetch = hooks.client.fetch.getMockImplementation()!
+    hooks.client.fetch.mockImplementation((query: string, params?: {type?: string}) => {
+      if (!query.includes('array::unique')) {
+        const isDrafts = query.includes('_id in path("drafts.**")')
+        if (!isDrafts) return pendingOldPerspective
+        return query.includes('"hasWeakReferences"')
+          ? pendingCurrentPerspectiveDocs
+          : pendingCurrentPerspectiveStrongRefs
+      }
+      return defaultFetch(query, params)
+    })
+
+    const fetchCount = hooks.client.fetch.mock.calls.length
+    hooks.perspective = 'published'
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(fetchCount + 2))
+    hooks.perspective = 'drafts'
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(fetchCount + 4))
+
+    resolveOldPerspective([{_id: 'published-article-1', _type: 'article', title: 'Old article'}])
+    await waitFor(() => expect(screen.getByText('Loading...')).toBeTruthy())
+    expect(screen.queryByRole('button', {name: 'Select article'})).toBeNull()
+
+    resolveCurrentPerspectiveDocs([
+      {_id: 'drafts-article-1', _type: 'article', title: 'Current article'},
+    ])
+    resolveCurrentPerspectiveStrongRefs([])
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    expect(screen.queryByText('Loading...')).toBeNull()
+  })
+
+  it('does not let a pending post-delete refresh clear loading for a newer scope', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    let resolveRefresh!: (docs: {_id: string; _type: string; title: string}[]) => void
+    const pendingRefresh = new Promise<{_id: string; _type: string; title: string}[]>((resolve) => {
+      resolveRefresh = resolve
+    })
+    let resolveBlogDocs!: (docs: {_id: string; _type: string; title: string}[]) => void
+    let resolveBlogStrongRefs!: (docs: {_id: string; _type: string; title: string}[]) => void
+    const pendingBlogDocs = new Promise<{_id: string; _type: string; title: string}[]>(
+      (resolve) => {
+        resolveBlogDocs = resolve
+      },
+    )
+    const pendingBlogStrongRefs = new Promise<{_id: string; _type: string; title: string}[]>(
+      (resolve) => {
+        resolveBlogStrongRefs = resolve
+      },
+    )
+    let articleEligibleFetches = 0
+    const defaultFetch = hooks.client.fetch.getMockImplementation()!
+    hooks.client.fetch.mockImplementation((query: string, params?: {type?: string}) => {
+      if (params?.type === 'article' && query.includes('"hasWeakReferences"')) {
+        articleEligibleFetches += 1
+        if (articleEligibleFetches === 2) return pendingRefresh
+      }
+      if (params?.type === 'blog') {
+        return query.includes('"hasWeakReferences"') ? pendingBlogDocs : pendingBlogStrongRefs
+      }
+      return defaultFetch(query, params)
+    })
+
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+    await waitFor(() => expect(hooks.client.commit).toHaveBeenCalledOnce())
+    await waitFor(() => expect(articleEligibleFetches).toBe(2))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
+    await waitFor(() =>
+      expect(
+        hooks.client.fetch.mock.calls.filter(([, params]) => params?.type === 'blog'),
+      ).toHaveLength(2),
+    )
+
+    resolveRefresh([{_id: 'drafts-article-1', _type: 'article', title: 'Old article'}])
+    await waitFor(() => expect(screen.getByText('Loading...')).toBeTruthy())
+    expect(screen.queryByRole('button', {name: 'Select blog'})).toBeNull()
+
+    resolveBlogDocs([{_id: 'blog-1', _type: 'blog', title: 'Current blog'}])
+    resolveBlogStrongRefs([])
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select blog'})).toBeTruthy())
+    expect(screen.queryByText('Loading...')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('1 Documents Deleted')
+    expect(hooks.client.commit).toHaveBeenCalledOnce()
+  })
+
   it('clears the selected documents and confirmation when the perspective changes', async () => {
     hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)

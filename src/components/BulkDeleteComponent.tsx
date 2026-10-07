@@ -142,10 +142,19 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
 
   // Fetch documents of the selected type
   useEffect(() => {
-    if (!isAdmin) return
+    let isStale = false
+    if (!isAdmin) {
+      setLoading(false)
+      return () => {
+        isStale = true
+      }
+    }
     if (!selectedType) {
       setDocumentsResult({scope: selectionScope, documents: [], stronglyReferenced: []})
-      return
+      setLoading(false)
+      return () => {
+        isStale = true
+      }
     }
     setLoading(true)
     Promise.all([
@@ -153,9 +162,16 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
       fetchDocuments({ type: selectedType, hasStrongRefs: true }),
     ])
       .then(([docs, strongRefs]) => {
-        setDocumentsResult({scope: selectionScope, documents: docs, stronglyReferenced: strongRefs})
+        if (!isStale) {
+          setDocumentsResult({scope: selectionScope, documents: docs, stronglyReferenced: strongRefs})
+        }
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!isStale) setLoading(false)
+      })
+    return () => {
+      isStale = true
+    }
   }, [isAdmin, selectedType, sanityClient, selectionScope, fetchDocuments, _])
 
   // Compute the list of document types available for deletion
@@ -305,15 +321,19 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     try {
       // Refresh documents after deletion
       const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })
-      setDocumentsResult(current =>
-        current.scope === selectionScope ? {...current, documents: docs} : current,
-      )
+      if (latestScope.current === validationScope) {
+        setDocumentsResult(current =>
+          current.scope === validationScope ? {...current, documents: docs} : current,
+        )
+      }
     } catch (e) {
-      const description = e instanceof Error ? e.message : String(e)
-      setRefreshWarning(`Documents were deleted, but the list couldn't be refreshed: ${description}`)
-      console.warn('Documents deleted, but failed to refresh the document list:', e)
+      if (latestScope.current === validationScope) {
+        const description = e instanceof Error ? e.message : String(e)
+        setRefreshWarning(`Documents were deleted, but the list couldn't be refreshed: ${description}`)
+        console.warn('Documents deleted, but failed to refresh the document list:', e)
+      }
     } finally {
-      setLoading(false)
+      if (latestScope.current === validationScope) setLoading(false)
     }
   }, [selection, selectionScope, selectedDocs, sanityClient, selectedType, fetchDocuments])
 
