@@ -15,6 +15,11 @@ type FeedbackMessage = {
   description?: string
 }
 
+type DocumentSelection = {
+  scope: string
+  docs: Set<{ _id: string; _type: string }>
+}
+
 /**
  * BulkDeleteComponent provides a UI for bulk deleting documents in Sanity Studio.
  * @param config - BulkDeleteToolOptions
@@ -25,13 +30,16 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const { schemaTypes } = config || {}
   const [docTypes, setDocTypes] = useState<{ name: string; title: string }[]>([])
   const [selectedType, setSelectedType] = useState<string>('')
-  const [selectedDocs, setSelectedDocs] = useState<Set<{ _id: string; _type: string }>>(new Set())
+  const [selection, setSelection] = useState<DocumentSelection>({scope: '', docs: new Set()})
   const [loading, setLoading] = useState(false)
-  const [documentsData, setDocumentsData] = useState<any[]>([])
+  const [documentsResult, setDocumentsResult] = useState<{
+    scope: string
+    documents: any[]
+    stronglyReferenced: any[]
+  }>({scope: '', documents: [], stronglyReferenced: []})
   const [typesData, setTypesData] = useState<any[]>([])
   const [_, forceRender] = useState(0)
-  const [stronglyReferencedDocs, setStronglyReferencedDocs] = useState<any[]>([])
-  const [showConfirm, setShowConfirm] = useState(false)
+  const [confirmScope, setConfirmScope] = useState<string>()
   const [feedback, setFeedback] = useState<FeedbackMessage>()
   const [refreshWarning, setRefreshWarning] = useState<string>()
   const currentUser = useCurrentUser()
@@ -41,6 +49,22 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   // selectedPerspective can be an object for releases in newer Studio versions.
   // selectedPerspectiveName is the stable name field shared by Studio v3-v6.
   const perspectiveMatch = getPerspectiveFilter(perspective.selectedPerspectiveName)
+  const selectionScope = JSON.stringify([selectedType, perspectiveMatch])
+  const documentsData = documentsResult.scope === selectionScope ? documentsResult.documents : []
+  const stronglyReferencedDocs =
+    documentsResult.scope === selectionScope ? documentsResult.stronglyReferenced : []
+  const selectedDocs =
+    selection.scope === selectionScope ? selection.docs : new Set<{ _id: string; _type: string }>()
+  const showConfirm = confirmScope === selectionScope
+
+  // Drop stale state as well as hiding it, so returning to an earlier scope
+  // cannot revive the old selection or confirmation.
+  useEffect(() => {
+    setSelection(current =>
+      current.scope === selectionScope ? current : {scope: selectionScope, docs: new Set()},
+    )
+    setConfirmScope(current => (current === selectionScope ? current : undefined))
+  }, [selectionScope])
 
   // Permission check
   const isAdmin = currentUser?.roles?.some(
@@ -82,8 +106,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   useEffect(() => {
     if (!isAdmin) return
     if (!selectedType) {
-      setDocumentsData([])
-      setStronglyReferencedDocs([])
+      setDocumentsResult({scope: selectionScope, documents: [], stronglyReferenced: []})
       return
     }
     setLoading(true)
@@ -92,8 +115,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
       fetchDocuments({ type: selectedType, hasStrongRefs: true }),
     ])
       .then(([docs, strongRefs]) => {
-        setDocumentsData(docs)
-        setStronglyReferencedDocs(strongRefs)
+        setDocumentsResult({scope: selectionScope, documents: docs, stronglyReferenced: strongRefs})
       })
       .finally(() => setLoading(false))
   }, [isAdmin, selectedType, sanityClient, perspectiveMatch, _])
@@ -128,11 +150,13 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   // Handles selecting or deselecting a single document
   const handleSelectDoc = useCallback(
     (id: string) => {
-      setSelectedDocs(prev => {
+      setSelection(prev => {
         const doc = documentsData.find(d => d._id === id)
         if (!doc) return prev
-        const exists = Array.from(prev).some(h => h._id === doc._id && h._type === doc._type)
-        const newSet = new Set(prev)
+        const currentDocs =
+          prev.scope === selectionScope ? prev.docs : new Set<{ _id: string; _type: string }>()
+        const exists = Array.from(currentDocs).some(h => h._id === doc._id && h._type === doc._type)
+        const newSet = new Set(currentDocs)
         if (exists) {
           Array.from(newSet).forEach(h => {
             if (h._id === doc._id && h._type === doc._type) newSet.delete(h)
@@ -140,24 +164,29 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         } else {
           newSet.add({ _id: doc._id, _type: doc._type })
         }
-        return newSet
+        return {scope: selectionScope, docs: newSet}
       })
     },
-    [documentsData]
+    [documentsData, selectionScope]
   )
 
   // Handles selecting or deselecting all documents in the current list
   const handleSelectAll = useCallback(() => {
     if (selectedDocs.size === documentsData.length) {
-      setSelectedDocs(new Set())
+      setSelection({scope: selectionScope, docs: new Set()})
     } else {
-      setSelectedDocs(new Set(documentsData.map(doc => ({ _id: doc._id, _type: doc._type }))))
+      setSelection({
+        scope: selectionScope,
+        docs: new Set(documentsData.map(doc => ({ _id: doc._id, _type: doc._type }))),
+      })
     }
-  }, [selectedDocs, documentsData])
+  }, [selectedDocs, documentsData, selectionScope])
 
   // Handles deleting all selected documents
   const handleDelete = useCallback(async () => {
-    setShowConfirm(false)
+    setConfirmScope(undefined)
+    // State from a previous type or perspective must never reach a transaction.
+    if (selection.scope !== selectionScope) return
     if (selectedDocs.size === 0) return
     setLoading(true)
     setRefreshWarning(undefined)
@@ -180,11 +209,13 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     }
 
     setFeedback({status: 'success', title: `${deletedCount} Documents Deleted`})
-    setSelectedDocs(new Set())
+    setSelection({scope: selectionScope, docs: new Set()})
     try {
       // Refresh documents after deletion
       const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })
-      setDocumentsData(docs)
+      setDocumentsResult(current =>
+        current.scope === selectionScope ? {...current, documents: docs} : current,
+      )
     } catch (e) {
       const description = e instanceof Error ? e.message : String(e)
       setRefreshWarning(`Documents were deleted, but the list couldn't be refreshed: ${description}`)
@@ -192,7 +223,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     } finally {
       setLoading(false)
     }
-  }, [selectedDocs, sanityClient, selectedType, documentsData, perspectiveMatch])
+  }, [selection, selectionScope, selectedDocs, sanityClient, selectedType, documentsData, perspectiveMatch])
 
   if (!isAdmin) {
     const roles = config.roles ? Array.from(new Set([...config.roles, 'administrator'])) : ['administrator']
@@ -258,12 +289,12 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
             <Button
               tone="critical"
               disabled={selectedDocs.size === 0 || loading}
-              onClick={() => setShowConfirm(true)}
+              onClick={() => setConfirmScope(selectionScope)}
               text={`Delete Selected (${selectedDocs.size})`}
             />
             <ConfirmDeleteDialog
               show={showConfirm}
-              onCancel={() => setShowConfirm(false)}
+              onCancel={() => setConfirmScope(undefined)}
               onDelete={handleDelete}
               loading={loading}
               count={selectedDocs.size}

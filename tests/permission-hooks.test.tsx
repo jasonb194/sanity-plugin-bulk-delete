@@ -7,12 +7,14 @@ import {BulkDeleteComponent} from '../src/components/BulkDeleteComponent'
 
 const hooks = vi.hoisted(() => ({
   currentUser: {roles: [] as {name: string}[]},
+  perspective: 'drafts' as string | undefined,
   client: {
-    fetch: vi.fn(async (query: string) =>
-      query.includes('array::unique')
-        ? ['article']
-        : [{_id: 'article-1', _type: 'article', title: 'One article'}],
-    ),
+    fetch: vi.fn(async (query: string) => {
+      if (query.includes('array::unique')) return ['article', 'blog']
+      const type = query.includes('_type == "blog"') ? 'blog' : 'article'
+      const perspective = query.includes('_id in path("drafts.**")') ? 'drafts' : 'published'
+      return [{_id: `${perspective}-${type}-1`, _type: type, title: `One ${type}`}]
+    }),
     delete: vi.fn(),
     commit: vi.fn(async () => undefined),
     transaction: vi.fn(),
@@ -21,7 +23,7 @@ const hooks = vi.hoisted(() => ({
 
 vi.mock('sanity', () => ({
   useCurrentUser: () => hooks.currentUser,
-  usePerspective: () => ({selectedPerspectiveName: 'drafts'}),
+  usePerspective: () => ({selectedPerspectiveName: hooks.perspective}),
   useClient: () => hooks.client,
 }))
 
@@ -60,9 +62,18 @@ vi.mock('@sanity/ui', () => {
 vi.mock('../src/components/DocumentTypeSelect', () => ({
   DocumentTypeSelect: ({setSelectedType}: {setSelectedType: (type: string) => void}) =>
     React.createElement(
-      'button',
-      {type: 'button', onClick: () => setSelectedType('article')},
-      'Choose article',
+      React.Fragment,
+      null,
+      React.createElement(
+        'button',
+        {type: 'button', onClick: () => setSelectedType('article')},
+        'Choose article',
+      ),
+      React.createElement(
+        'button',
+        {type: 'button', onClick: () => setSelectedType('blog')},
+        'Choose blog',
+      ),
     ),
 }))
 vi.mock('../src/components/DocumentList', () => ({
@@ -70,14 +81,14 @@ vi.mock('../src/components/DocumentList', () => ({
     documentsData,
     handleSelectDoc,
   }: {
-    documentsData: {_id: string}[]
+    documentsData: {_id: string; _type: string}[]
     handleSelectDoc: (id: string) => void
   }) =>
     documentsData.length > 0
       ? React.createElement(
           'button',
-          {type: 'button', onClick: () => handleSelectDoc('article-1')},
-          'Select article',
+          {type: 'button', onClick: () => handleSelectDoc(documentsData[0]._id)},
+          `Select ${documentsData[0]._type}`,
         )
       : null,
 }))
@@ -91,6 +102,7 @@ vi.mock('../src/components/ConfirmDeleteDialog', () => ({
 describe('BulkDeleteComponent permission hooks', () => {
   beforeEach(() => {
     hooks.currentUser = {roles: []}
+    hooks.perspective = 'drafts'
     hooks.client.fetch.mockClear()
     hooks.client.delete.mockClear()
     hooks.client.commit.mockReset().mockResolvedValue(undefined)
@@ -139,7 +151,7 @@ describe('BulkDeleteComponent permission hooks', () => {
     await waitFor(() =>
       expect(screen.getByRole('status').textContent).toContain('1 Documents Deleted'),
     )
-    expect(hooks.client.delete).toHaveBeenCalledWith('article-1')
+    expect(hooks.client.delete).toHaveBeenCalledWith('drafts-article-1')
     expect(hooks.client.commit).toHaveBeenCalledOnce()
   })
 
@@ -179,5 +191,95 @@ describe('BulkDeleteComponent permission hooks', () => {
     expect(screen.getByRole('alert').textContent).toContain("couldn't be refreshed")
     expect(screen.getByRole('alert').textContent).toContain('network unavailable')
     expect(hooks.client.commit).toHaveBeenCalledOnce()
+  })
+
+  it('clears the selected documents and confirmation when the document type changes', async () => {
+    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+    expect(screen.getByRole('button', {name: 'Confirm delete'})).toBeTruthy()
+
+    const fetchCountBeforeSwitch = hooks.client.fetch.mock.calls.length
+    let resolveBlogFetch!: (docs: {_id: string; _type: string; title: string}[]) => void
+    const pendingBlogFetch = new Promise<{_id: string; _type: string; title: string}[]>(
+      (resolve) => {
+        resolveBlogFetch = resolve
+      },
+    )
+    const defaultFetch = hooks.client.fetch.getMockImplementation()!
+    hooks.client.fetch.mockImplementation((query: string) =>
+      query.includes('_type == "blog"') ? pendingBlogFetch : defaultFetch(query),
+    )
+    fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
+
+    await waitFor(() =>
+      expect(hooks.client.fetch).toHaveBeenCalledTimes(fetchCountBeforeSwitch + 2),
+    )
+    expect(screen.queryByRole('button', {name: 'Select article'})).toBeNull()
+    expect(screen.queryByRole('button', {name: 'Confirm delete'})).toBeNull()
+    resolveBlogFetch([{_id: 'blog-1', _type: 'blog', title: 'One blog'}])
+
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select blog'})).toBeTruthy())
+    expect(screen.queryByRole('button', {name: 'Confirm delete'})).toBeNull()
+    expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy()
+    expect(hooks.client.delete).not.toHaveBeenCalled()
+    expect(hooks.client.commit).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy()
+  })
+
+  it('clears the selected documents and confirmation when the perspective changes', async () => {
+    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+    expect(screen.getByRole('button', {name: 'Confirm delete'})).toBeTruthy()
+
+    const fetchCountBeforeSwitch = hooks.client.fetch.mock.calls.length
+    hooks.perspective = 'published'
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() =>
+      expect(hooks.client.fetch).toHaveBeenCalledTimes(fetchCountBeforeSwitch + 2),
+    )
+    expect(screen.queryByRole('button', {name: 'Confirm delete'})).toBeNull()
+    expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy()
+    expect(hooks.client.delete).not.toHaveBeenCalled()
+    expect(hooks.client.commit).not.toHaveBeenCalled()
+
+    hooks.perspective = 'drafts'
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+    await waitFor(() =>
+      expect(hooks.client.fetch).toHaveBeenCalledTimes(fetchCountBeforeSwitch + 4),
+    )
+    expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy()
+  })
+
+  it('keeps the selection when an unresolved perspective normalizes to drafts', async () => {
+    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+
+    hooks.perspective = undefined
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+    expect(hooks.client.fetch).toHaveBeenCalledTimes(3)
   })
 })
