@@ -380,9 +380,20 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         message: {status: 'success', title: `${deletedCount} Documents Deleted`},
       })
     }
-    setSelection(current =>
-      current === selection ? {scope: validationScope, docs: new Set()} : current,
+    const deletedDocuments = new Set(
+      docsToDelete.map(doc => JSON.stringify([doc._id, doc._type])),
     )
+    setSelection(current => {
+      if (current.scope !== validationScope) return current
+      return {
+        scope: validationScope,
+        docs: new Set(
+          Array.from(current.docs).filter(
+            doc => !deletedDocuments.has(JSON.stringify([doc._id, doc._type])),
+          ),
+        ),
+      }
+    })
     try {
       // Refresh documents after deletion
       const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })

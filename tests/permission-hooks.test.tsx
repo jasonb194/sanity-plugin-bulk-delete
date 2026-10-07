@@ -173,6 +173,68 @@ describe('BulkDeleteComponent permission hooks', () => {
     expect(hooks.client.commit).toHaveBeenCalledOnce()
   })
 
+  it('removes a deleted ID reselected after leaving and returning to its scope', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    let resolveCommit!: () => void
+    const pendingCommit = new Promise<void>((resolve) => {
+      resolveCommit = resolve
+    })
+    hooks.client.commit.mockImplementationOnce(() => pendingCommit)
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+    await waitFor(() => expect(hooks.client.commit).toHaveBeenCalledOnce())
+
+    fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select blog'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+
+    resolveCommit()
+    await waitFor(() =>
+      expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy(),
+    )
+    expect(hooks.client.delete).toHaveBeenCalledWith('drafts-article-1')
+  })
+
+  it('preserves a different-scope selection when an earlier delete commit resolves', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    let resolveCommit!: () => void
+    const pendingCommit = new Promise<void>((resolve) => {
+      resolveCommit = resolve
+    })
+    hooks.client.commit.mockImplementationOnce(() => pendingCommit)
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+    await waitFor(() => expect(hooks.client.commit).toHaveBeenCalledOnce())
+
+    fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select blog'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select blog'}))
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+
+    resolveCommit()
+    await waitFor(() =>
+      expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy(),
+    )
+    expect(hooks.client.delete).toHaveBeenCalledWith('drafts-article-1')
+  })
+
   it('rechecks selected document eligibility before creating a transaction', async () => {
     hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     render(<BulkDeleteComponent schemaTypes={[]} />)
