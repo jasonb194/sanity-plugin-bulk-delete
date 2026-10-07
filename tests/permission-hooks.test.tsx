@@ -6,19 +6,29 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 import {BulkDeleteComponent} from '../src/components/BulkDeleteComponent'
 
 const hooks = vi.hoisted(() => ({
-  currentUser: {roles: [] as {name: string}[]},
+  currentUser: {id: 'user-a', roles: [] as {name: string}[]},
   perspective: 'drafts' as string | undefined,
+  projectId: 'project-a',
+  dataset: 'dataset-a',
   client: {
     fetch: vi.fn(async (query: string) => {
       if (query.includes('array::unique')) return ['article', 'blog']
       const type = query.includes('_type == "blog"') ? 'blog' : 'article'
       const perspective = query.includes('_id in path("drafts.**")') ? 'drafts' : 'published'
+      if (query.includes('"hasWeakReferences"'))
+        return (
+          hooks.eligibleDocs ?? [
+            {_id: `${perspective}-${type}-1`, _type: type, title: `One ${type}`},
+          ]
+        )
       return [{_id: `${perspective}-${type}-1`, _type: type, title: `One ${type}`}]
     }),
+    config: vi.fn(() => ({projectId: hooks.projectId, dataset: hooks.dataset})),
     delete: vi.fn(),
     commit: vi.fn(async () => undefined),
     transaction: vi.fn(),
   },
+  eligibleDocs: undefined as {_id: string; _type: string; title: string}[] | undefined,
 }))
 
 vi.mock('sanity', () => ({
@@ -101,8 +111,11 @@ vi.mock('../src/components/ConfirmDeleteDialog', () => ({
 
 describe('BulkDeleteComponent permission hooks', () => {
   beforeEach(() => {
-    hooks.currentUser = {roles: []}
+    hooks.currentUser = {id: 'user-a', roles: []}
     hooks.perspective = 'drafts'
+    hooks.projectId = 'project-a'
+    hooks.dataset = 'dataset-a'
+    hooks.eligibleDocs = undefined
     hooks.client.fetch.mockClear()
     hooks.client.delete.mockClear()
     hooks.client.commit.mockReset().mockResolvedValue(undefined)
@@ -127,18 +140,18 @@ describe('BulkDeleteComponent permission hooks', () => {
   it('keeps hooks in the same order when permission changes', async () => {
     const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
 
-    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     expect(() => rerender(<BulkDeleteComponent schemaTypes={[]} />)).not.toThrow()
 
     await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
 
-    hooks.currentUser = {roles: []}
+    hooks.currentUser = {id: 'user-a', roles: []}
     rerender(<BulkDeleteComponent schemaTypes={[]} />)
     expect(hooks.client.fetch).toHaveBeenCalledTimes(1)
   })
 
   it('shows accessible success feedback after a confirmed deletion', async () => {
-    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     render(<BulkDeleteComponent schemaTypes={[]} />)
 
     await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
@@ -155,8 +168,86 @@ describe('BulkDeleteComponent permission hooks', () => {
     expect(hooks.client.commit).toHaveBeenCalledOnce()
   })
 
+  it('rechecks selected document eligibility before creating a transaction', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    hooks.eligibleDocs = []
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('Selection Changed'),
+    )
+    expect(hooks.client.delete).not.toHaveBeenCalled()
+    expect(hooks.client.commit).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy()
+  })
+
+  it('does not transact if permission is revoked while eligibility verification is pending', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    let resolveEligibility!: (docs: {_id: string; _type: string; title: string}[]) => void
+    const pendingEligibility = new Promise<{_id: string; _type: string; title: string}[]>(
+      (resolve) => {
+        resolveEligibility = resolve
+      },
+    )
+    hooks.client.fetch.mockImplementationOnce(() => pendingEligibility)
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(4))
+    hooks.currentUser = {id: 'user-a', roles: []}
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+    resolveEligibility([{_id: 'drafts-article-1', _type: 'article', title: 'One article'}])
+
+    await waitFor(() => expect(screen.getByText(/administrator/i)).toBeTruthy())
+    expect(hooks.client.delete).not.toHaveBeenCalled()
+    expect(hooks.client.commit).not.toHaveBeenCalled()
+  })
+
+  it('clears selection and confirmation when the current user or client context changes', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    hooks.currentUser = {id: 'user-b', roles: [{name: 'administrator'}]}
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy(),
+    )
+    expect(screen.queryByRole('button', {name: 'Confirm delete'})).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+    hooks.projectId = 'project-b'
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', {name: 'Delete Selected (0)'})).toBeTruthy(),
+    )
+    expect(screen.queryByRole('button', {name: 'Confirm delete'})).toBeNull()
+    expect(hooks.client.commit).not.toHaveBeenCalled()
+  })
+
   it('shows accessible error feedback when the delete transaction fails', async () => {
-    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     hooks.client.commit.mockRejectedValueOnce(new Error('write denied'))
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     render(<BulkDeleteComponent schemaTypes={[]} />)
@@ -173,7 +264,7 @@ describe('BulkDeleteComponent permission hooks', () => {
   })
 
   it('keeps success feedback and warns when refreshing the list fails after deletion', async () => {
-    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     render(<BulkDeleteComponent schemaTypes={[]} />)
 
     await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
@@ -182,6 +273,8 @@ describe('BulkDeleteComponent permission hooks', () => {
     fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
     fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
 
+    const defaultFetch = hooks.client.fetch.getMockImplementation()!
+    hooks.client.fetch.mockImplementationOnce((query: string) => defaultFetch(query))
     hooks.client.fetch.mockRejectedValueOnce(new Error('network unavailable'))
     fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
 
@@ -194,7 +287,7 @@ describe('BulkDeleteComponent permission hooks', () => {
   })
 
   it('clears the selected documents and confirmation when the document type changes', async () => {
-    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     render(<BulkDeleteComponent schemaTypes={[]} />)
 
     await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
@@ -236,7 +329,7 @@ describe('BulkDeleteComponent permission hooks', () => {
   })
 
   it('clears the selected documents and confirmation when the perspective changes', async () => {
-    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
 
     await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
@@ -267,7 +360,7 @@ describe('BulkDeleteComponent permission hooks', () => {
   })
 
   it('keeps the selection when an unresolved perspective normalizes to drafts', async () => {
-    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
     const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
 
     await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))

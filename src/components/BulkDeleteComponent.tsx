@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, {useCallback, useEffect, useRef, useState} from 'react'
 import { useCurrentUser, useClient, usePerspective } from 'sanity'
 import { Button, Card, Flex, Spinner, Stack, Text } from '@sanity/ui'
 import { defineQuery } from 'groq'
@@ -18,6 +18,23 @@ type FeedbackMessage = {
 type DocumentSelection = {
   scope: string
   docs: Set<{ _id: string; _type: string }>
+}
+
+const permissionError: FeedbackMessage = {
+  status: 'error',
+  title: 'Selection No Longer Available',
+  description: 'Your permissions or Studio context changed. Select documents again before deleting.',
+}
+
+const hasEligibleSelection = (
+  selectedDocs: {_id: string; _type: string}[],
+  eligibleDocs: {_id: string; _type: string}[],
+  selectedType: string,
+) => {
+  const eligibleIds = new Set(eligibleDocs.map((doc) => JSON.stringify([doc._id, doc._type])))
+  return selectedDocs.every(
+    (doc) => doc._type === selectedType && eligibleIds.has(JSON.stringify([doc._id, doc._type])),
+  )
 }
 
 /**
@@ -46,16 +63,39 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const perspective = usePerspective()
   const sanityClient = useClient({ apiVersion: '2025-05-29' })
 
+  // Permission check
+  const isAdmin = currentUser?.roles?.some(
+    (role: any) => role.name === 'administrator' || config.roles?.includes(role.name)
+  )
+
   // selectedPerspective can be an object for releases in newer Studio versions.
   // selectedPerspectiveName is the stable name field shared by Studio v3-v6.
   const perspectiveMatch = getPerspectiveFilter(perspective.selectedPerspectiveName)
-  const selectionScope = JSON.stringify([selectedType, perspectiveMatch])
+  const clientConfig = sanityClient.config()
+  const roleNames = currentUser?.roles?.map((role: any) => role.name).sort() ?? []
+  const allowedRoles = [...(config.roles ?? [])].sort()
+  const selectionScope = JSON.stringify([
+    currentUser?.id ?? null,
+    clientConfig.projectId ?? null,
+    clientConfig.dataset ?? null,
+    roleNames,
+    allowedRoles,
+    Boolean(isAdmin),
+    selectedType,
+    perspectiveMatch,
+  ])
   const documentsData = documentsResult.scope === selectionScope ? documentsResult.documents : []
   const stronglyReferencedDocs =
     documentsResult.scope === selectionScope ? documentsResult.stronglyReferenced : []
   const selectedDocs =
     selection.scope === selectionScope ? selection.docs : new Set<{ _id: string; _type: string }>()
   const showConfirm = confirmScope === selectionScope
+
+  // Async delete validation must always compare against the newest permission and context state.
+  const latestScope = useRef(selectionScope)
+  const latestIsAdmin = useRef(Boolean(isAdmin))
+  latestScope.current = selectionScope
+  latestIsAdmin.current = Boolean(isAdmin)
 
   // Drop stale state as well as hiding it, so returning to an earlier scope
   // cannot revive the old selection or confirmation.
@@ -66,30 +106,28 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     setConfirmScope(current => (current === selectionScope ? current : undefined))
   }, [selectionScope])
 
-  // Permission check
-  const isAdmin = currentUser?.roles?.some(
-    (role: any) => role.name === 'administrator' || config.roles?.includes(role.name)
-  )
-
   // Helper to fetch documents by reference count
-  const fetchDocuments = async ({
-    type,
-    hasStrongRefs,
-  }: {
-    type: string
-    hasStrongRefs: boolean
-  }) => {
-    const refCountCondition = hasStrongRefs
-      ? 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) > 0'
-      : 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) == 0'
-    const extraFields = hasStrongRefs
-      ? ''
-      : ', "hasWeakReferences": count(*[references(^._id) && defined(_weak) && _weak == true]) > 0'
-    const query = defineQuery(
-      `*[ ${perspectiveMatch} _type == "${type}" && ${refCountCondition}]{_id, _type, title, name${extraFields}}`
-    )
-    return sanityClient.fetch(query, {}, { perspective: 'raw' })
-  }
+  const fetchDocuments = useCallback(
+    async ({
+      type,
+      hasStrongRefs,
+    }: {
+      type: string
+      hasStrongRefs: boolean
+    }) => {
+      const refCountCondition = hasStrongRefs
+        ? 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) > 0'
+        : 'count(*[references(^._id) && (!defined(_weak) || _weak != true)]) == 0'
+      const extraFields = hasStrongRefs
+        ? ''
+        : ', "hasWeakReferences": count(*[references(^._id) && defined(_weak) && _weak == true]) > 0'
+      const query = defineQuery(
+        `*[ ${perspectiveMatch} _type == "${type}" && ${refCountCondition}]{_id, _type, title, name${extraFields}}`
+      )
+      return sanityClient.fetch(query, {}, { perspective: 'raw' })
+    },
+    [perspectiveMatch, sanityClient],
+  )
 
   // Fetch all unique document types from the dataset
   useEffect(() => {
@@ -118,7 +156,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         setDocumentsResult({scope: selectionScope, documents: docs, stronglyReferenced: strongRefs})
       })
       .finally(() => setLoading(false))
-  }, [isAdmin, selectedType, sanityClient, perspectiveMatch, _])
+  }, [isAdmin, selectedType, sanityClient, selectionScope, fetchDocuments, _])
 
   // Compute the list of document types available for deletion
   useEffect(() => {
@@ -186,14 +224,68 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const handleDelete = useCallback(async () => {
     setConfirmScope(undefined)
     // State from a previous type or perspective must never reach a transaction.
-    if (selection.scope !== selectionScope) return
-    if (selectedDocs.size === 0) return
+    const validationScope = selectionScope
+    if (selection.scope !== validationScope || !latestIsAdmin.current) return
+    const docsToDelete = Array.from(selectedDocs)
+    if (docsToDelete.length === 0) return
     setLoading(true)
     setRefreshWarning(undefined)
-    const deletedCount = selectedDocs.size
+    const deletedCount = docsToDelete.length
+    let eligibleDocs: {_id: string; _type: string}[]
+    try {
+      // Recheck against the current deletion-eligible result. Documents may have
+      // gained strong references or otherwise become unavailable since selection.
+      eligibleDocs = await fetchDocuments({type: selectedType, hasStrongRefs: false})
+    } catch (e) {
+      if (latestIsAdmin.current && latestScope.current === validationScope) {
+        setFeedback({
+          status: 'error',
+          title: 'Unable to Verify Selection',
+          description: e instanceof Error ? e.message : String(e),
+        })
+      }
+      setLoading(false)
+      return
+    }
+
+    // A role, user, client, perspective, or type may have changed while fetching.
+    if (!latestIsAdmin.current) {
+      setLoading(false)
+      return
+    }
+    if (latestScope.current !== validationScope) {
+      setFeedback(permissionError)
+      setLoading(false)
+      return
+    }
+
+    if (!hasEligibleSelection(docsToDelete, eligibleDocs, selectedType)) {
+      setSelection({scope: validationScope, docs: new Set()})
+      setFeedback({
+        status: 'error',
+        title: 'Selection Changed',
+        description:
+          'One or more selected documents are no longer eligible for deletion. Select documents again.',
+      })
+      setLoading(false)
+      return
+    }
+
+    // Keep this immediately before transaction creation: no asynchronous work
+    // should occur between the latest authorization/context check and writes.
+    if (!latestIsAdmin.current) {
+      setLoading(false)
+      return
+    }
+    if (latestScope.current !== validationScope) {
+      setFeedback(permissionError)
+      setLoading(false)
+      return
+    }
+
     try {
       const tx = sanityClient.transaction()
-      Array.from(selectedDocs).forEach(doc => {
+      docsToDelete.forEach((doc) => {
         tx.delete(doc._id)
       })
       await tx.commit()
@@ -223,7 +315,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     } finally {
       setLoading(false)
     }
-  }, [selection, selectionScope, selectedDocs, sanityClient, selectedType, documentsData, perspectiveMatch])
+  }, [selection, selectionScope, selectedDocs, sanityClient, selectedType, fetchDocuments])
 
   if (!isAdmin) {
     const roles = config.roles ? Array.from(new Set([...config.roles, 'administrator'])) : ['administrator']
