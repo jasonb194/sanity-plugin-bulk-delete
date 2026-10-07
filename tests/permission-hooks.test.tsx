@@ -159,4 +159,25 @@ describe('BulkDeleteComponent permission hooks', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('write denied'))
     consoleError.mockRestore()
   })
+
+  it('keeps success feedback and warns when refreshing the list fails after deletion', async () => {
+    hooks.currentUser = {roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    hooks.client.fetch.mockRejectedValueOnce(new Error('network unavailable'))
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('1 Documents Deleted'),
+    )
+    expect(screen.getByRole('alert').textContent).toContain("couldn't be refreshed")
+    expect(screen.getByRole('alert').textContent).toContain('network unavailable')
+    expect(hooks.client.commit).toHaveBeenCalledOnce()
+  })
 })

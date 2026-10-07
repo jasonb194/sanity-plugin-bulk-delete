@@ -33,6 +33,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const [stronglyReferencedDocs, setStronglyReferencedDocs] = useState<any[]>([])
   const [showConfirm, setShowConfirm] = useState(false)
   const [feedback, setFeedback] = useState<FeedbackMessage>()
+  const [refreshWarning, setRefreshWarning] = useState<string>()
   const currentUser = useCurrentUser()
   const perspective = usePerspective()
   const sanityClient = useClient({ apiVersion: '2025-05-29' })
@@ -159,17 +160,14 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     setShowConfirm(false)
     if (selectedDocs.size === 0) return
     setLoading(true)
+    setRefreshWarning(undefined)
+    const deletedCount = selectedDocs.size
     try {
       const tx = sanityClient.transaction()
       Array.from(selectedDocs).forEach(doc => {
         tx.delete(doc._id)
       })
       await tx.commit()
-      setFeedback({status: 'success', title: `${selectedDocs.size} Documents Deleted`})
-      setSelectedDocs(new Set())
-      // Refresh documents after deletion
-      const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })
-      setDocumentsData(docs)
     } catch (e) {
       setFeedback({
         status: 'error',
@@ -177,6 +175,20 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         description: e instanceof Error ? e.message : String(e),
       })
       console.error('Error deleting documents:', e)
+      setLoading(false)
+      return
+    }
+
+    setFeedback({status: 'success', title: `${deletedCount} Documents Deleted`})
+    setSelectedDocs(new Set())
+    try {
+      // Refresh documents after deletion
+      const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })
+      setDocumentsData(docs)
+    } catch (e) {
+      const description = e instanceof Error ? e.message : String(e)
+      setRefreshWarning(`Documents were deleted, but the list couldn't be refreshed: ${description}`)
+      console.warn('Documents deleted, but failed to refresh the document list:', e)
     } finally {
       setLoading(false)
     }
@@ -203,6 +215,11 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
               {feedback.title}
               {feedback.description ? `: ${feedback.description}` : ''}
             </Text>
+          </Card>
+        )}
+        {refreshWarning && (
+          <Card padding={3} tone="caution" role="alert">
+            <Text>{refreshWarning}</Text>
           </Card>
         )}
         <DocumentTypeSelect
