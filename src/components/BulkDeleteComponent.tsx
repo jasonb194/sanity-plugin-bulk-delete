@@ -15,6 +15,17 @@ type FeedbackMessage = {
   description?: string
 }
 
+type ScopedFeedback = {
+  scope: string
+  scopeType: 'authorization' | 'selection'
+  message: FeedbackMessage
+}
+
+type ScopedWarning = {
+  scope: string
+  message: string
+}
+
 type DocumentSelection = {
   scope: string
   docs: Set<{ _id: string; _type: string }>
@@ -57,8 +68,8 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const [typesData, setTypesData] = useState<any[]>([])
   const [_, forceRender] = useState(0)
   const [confirmScope, setConfirmScope] = useState<string>()
-  const [feedback, setFeedback] = useState<FeedbackMessage>()
-  const [refreshWarning, setRefreshWarning] = useState<string>()
+  const [feedback, setFeedback] = useState<ScopedFeedback>()
+  const [refreshWarning, setRefreshWarning] = useState<ScopedWarning>()
   const currentUser = useCurrentUser()
   const perspective = usePerspective()
   const sanityClient = useClient({ apiVersion: '2025-05-29' })
@@ -74,13 +85,16 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const clientConfig = sanityClient.config()
   const roleNames = currentUser?.roles?.map((role: any) => role.name).sort() ?? []
   const allowedRoles = [...(config.roles ?? [])].sort()
-  const selectionScope = JSON.stringify([
+  const authorizationScope = JSON.stringify([
     currentUser?.id ?? null,
     clientConfig.projectId ?? null,
     clientConfig.dataset ?? null,
     roleNames,
     allowedRoles,
     Boolean(isAdmin),
+  ])
+  const selectionScope = JSON.stringify([
+    authorizationScope,
     selectedType,
     perspectiveMatch,
   ])
@@ -90,11 +104,21 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const selectedDocs =
     selection.scope === selectionScope ? selection.docs : new Set<{ _id: string; _type: string }>()
   const showConfirm = confirmScope === selectionScope
+  const visibleFeedback =
+    feedback &&
+    ((feedback.scopeType === 'authorization' && feedback.scope === authorizationScope) ||
+      (feedback.scopeType === 'selection' && feedback.scope === selectionScope))
+      ? feedback.message
+      : undefined
+  const visibleRefreshWarning =
+    refreshWarning?.scope === selectionScope ? refreshWarning.message : undefined
 
   // Async delete validation must always compare against the newest permission and context state.
   const latestScope = useRef(selectionScope)
+  const latestAuthorizationScope = useRef(authorizationScope)
   const latestIsAdmin = useRef(Boolean(isAdmin))
   latestScope.current = selectionScope
+  latestAuthorizationScope.current = authorizationScope
   latestIsAdmin.current = Boolean(isAdmin)
 
   // Drop stale state as well as hiding it, so returning to an earlier scope
@@ -104,7 +128,17 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
       current.scope === selectionScope ? current : {scope: selectionScope, docs: new Set()},
     )
     setConfirmScope(current => (current === selectionScope ? current : undefined))
-  }, [selectionScope])
+    setFeedback(current => {
+      if (!current) return current
+      if (current.scopeType === 'authorization') {
+        return current.scope === authorizationScope ? current : undefined
+      }
+      return current.scope === selectionScope ? current : undefined
+    })
+    setRefreshWarning(current =>
+      current?.scope === selectionScope ? current : undefined,
+    )
+  }, [selectionScope, authorizationScope])
 
   // Helper to fetch documents by reference count
   const fetchDocuments = useCallback(
@@ -241,6 +275,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     setConfirmScope(undefined)
     // State from a previous type or perspective must never reach a transaction.
     const validationScope = selectionScope
+    const validationAuthorizationScope = authorizationScope
     if (selection.scope !== validationScope || !latestIsAdmin.current) return
     const docsToDelete = Array.from(selectedDocs)
     if (docsToDelete.length === 0) return
@@ -255,33 +290,45 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     } catch (e) {
       if (latestIsAdmin.current && latestScope.current === validationScope) {
         setFeedback({
-          status: 'error',
-          title: 'Unable to Verify Selection',
-          description: e instanceof Error ? e.message : String(e),
+          scope: validationScope,
+          scopeType: 'selection',
+          message: {
+            status: 'error',
+            title: 'Unable to Verify Selection',
+            description: e instanceof Error ? e.message : String(e),
+          },
         })
       }
-      setLoading(false)
+      if (latestScope.current === validationScope) setLoading(false)
       return
     }
 
     // A role, user, client, perspective, or type may have changed while fetching.
     if (!latestIsAdmin.current) {
-      setLoading(false)
       return
     }
     if (latestScope.current !== validationScope) {
-      setFeedback(permissionError)
-      setLoading(false)
+      if (latestAuthorizationScope.current === validationAuthorizationScope) {
+        setFeedback({
+          scope: latestScope.current,
+          scopeType: 'selection',
+          message: permissionError,
+        })
+      }
       return
     }
 
     if (!hasEligibleSelection(docsToDelete, eligibleDocs, selectedType)) {
       setSelection({scope: validationScope, docs: new Set()})
       setFeedback({
-        status: 'error',
-        title: 'Selection Changed',
-        description:
-          'One or more selected documents are no longer eligible for deletion. Select documents again.',
+        scope: validationScope,
+        scopeType: 'selection',
+        message: {
+          status: 'error',
+          title: 'Selection Changed',
+          description:
+            'One or more selected documents are no longer eligible for deletion. Select documents again.',
+        },
       })
       setLoading(false)
       return
@@ -290,12 +337,16 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     // Keep this immediately before transaction creation: no asynchronous work
     // should occur between the latest authorization/context check and writes.
     if (!latestIsAdmin.current) {
-      setLoading(false)
       return
     }
     if (latestScope.current !== validationScope) {
-      setFeedback(permissionError)
-      setLoading(false)
+      if (latestAuthorizationScope.current === validationAuthorizationScope) {
+        setFeedback({
+          scope: latestScope.current,
+          scopeType: 'selection',
+          message: permissionError,
+        })
+      }
       return
     }
 
@@ -306,18 +357,32 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
       })
       await tx.commit()
     } catch (e) {
-      setFeedback({
-        status: 'error',
-        title: 'Error Deleting Documents',
-        description: e instanceof Error ? e.message : String(e),
-      })
+      if (latestAuthorizationScope.current === validationAuthorizationScope) {
+        setFeedback({
+          scope: validationAuthorizationScope,
+          scopeType: 'authorization',
+          message: {
+            status: 'error',
+            title: 'Error Deleting Documents',
+            description: e instanceof Error ? e.message : String(e),
+          },
+        })
+      }
       console.error('Error deleting documents:', e)
-      setLoading(false)
+      if (latestScope.current === validationScope) setLoading(false)
       return
     }
 
-    setFeedback({status: 'success', title: `${deletedCount} Documents Deleted`})
-    setSelection({scope: selectionScope, docs: new Set()})
+    if (latestAuthorizationScope.current === validationAuthorizationScope) {
+      setFeedback({
+        scope: validationAuthorizationScope,
+        scopeType: 'authorization',
+        message: {status: 'success', title: `${deletedCount} Documents Deleted`},
+      })
+    }
+    setSelection(current =>
+      current === selection ? {scope: validationScope, docs: new Set()} : current,
+    )
     try {
       // Refresh documents after deletion
       const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })
@@ -329,13 +394,16 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     } catch (e) {
       if (latestScope.current === validationScope) {
         const description = e instanceof Error ? e.message : String(e)
-        setRefreshWarning(`Documents were deleted, but the list couldn't be refreshed: ${description}`)
+        setRefreshWarning({
+          scope: validationScope,
+          message: `Documents were deleted, but the list couldn't be refreshed: ${description}`,
+        })
         console.warn('Documents deleted, but failed to refresh the document list:', e)
       }
     } finally {
       if (latestScope.current === validationScope) setLoading(false)
     }
-  }, [selection, selectionScope, selectedDocs, sanityClient, selectedType, fetchDocuments])
+  }, [selection, selectionScope, authorizationScope, selectedDocs, sanityClient, selectedType, fetchDocuments])
 
   if (!isAdmin) {
     const roles = config.roles ? Array.from(new Set([...config.roles, 'administrator'])) : ['administrator']
@@ -348,21 +416,21 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         <Text size={2} weight="semibold">
           Bulk Delete Documents
         </Text>
-        {feedback && (
+        {visibleFeedback && (
           <Card
             padding={3}
-            tone={feedback.status === 'error' ? 'critical' : 'positive'}
-            role={feedback.status === 'error' ? 'alert' : 'status'}
+            tone={visibleFeedback.status === 'error' ? 'critical' : 'positive'}
+            role={visibleFeedback.status === 'error' ? 'alert' : 'status'}
           >
             <Text>
-              {feedback.title}
-              {feedback.description ? `: ${feedback.description}` : ''}
+              {visibleFeedback.title}
+              {visibleFeedback.description ? `: ${visibleFeedback.description}` : ''}
             </Text>
           </Card>
         )}
-        {refreshWarning && (
+        {visibleRefreshWarning && (
           <Card padding={3} tone="caution" role="alert">
-            <Text>{refreshWarning}</Text>
+            <Text>{visibleRefreshWarning}</Text>
           </Card>
         )}
         <DocumentTypeSelect

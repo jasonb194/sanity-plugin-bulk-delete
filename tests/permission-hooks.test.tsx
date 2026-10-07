@@ -291,6 +291,10 @@ describe('BulkDeleteComponent permission hooks', () => {
     expect(screen.getByRole('alert').textContent).toContain("couldn't be refreshed")
     expect(screen.getByRole('alert').textContent).toContain('network unavailable')
     expect(hooks.client.commit).toHaveBeenCalledOnce()
+
+    fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select blog'})).toBeTruthy())
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('clears the selected documents and confirmation when the document type changes', async () => {
@@ -455,6 +459,132 @@ describe('BulkDeleteComponent permission hooks', () => {
     expect(screen.queryByText('Loading...')).toBeNull()
     expect(screen.getByRole('status').textContent).toContain('1 Documents Deleted')
     expect(hooks.client.commit).toHaveBeenCalledOnce()
+  })
+
+  it('does not show an old transaction result or clear a newer scope selection', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    let resolveCommit!: () => void
+    const pendingCommit = new Promise<void>((resolve) => {
+      resolveCommit = resolve
+    })
+    hooks.client.commit.mockImplementationOnce(() => pendingCommit)
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+    await waitFor(() => expect(hooks.client.commit).toHaveBeenCalledOnce())
+
+    fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select blog'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select blog'}))
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+
+    const fetchCountBeforeCommitResolves = hooks.client.fetch.mock.calls.length
+    resolveCommit()
+
+    await waitFor(() =>
+      expect(hooks.client.fetch).toHaveBeenCalledTimes(fetchCountBeforeCommitResolves + 1),
+    )
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('1 Documents Deleted')
+    expect(hooks.client.commit).toHaveBeenCalledOnce()
+  })
+
+  it('hides a pending transaction result after the user context changes', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    let resolveCommit!: () => void
+    const pendingCommit = new Promise<void>((resolve) => {
+      resolveCommit = resolve
+    })
+    hooks.client.commit.mockImplementationOnce(() => pendingCommit)
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+    await waitFor(() => expect(hooks.client.commit).toHaveBeenCalledOnce())
+
+    hooks.currentUser = {id: 'user-b', roles: [{name: 'administrator'}]}
+    rerender(<BulkDeleteComponent schemaTypes={[]} />)
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+
+    const fetchCountBeforeCommitResolves = hooks.client.fetch.mock.calls.length
+    resolveCommit()
+
+    await waitFor(() =>
+      expect(hooks.client.fetch).toHaveBeenCalledTimes(fetchCountBeforeCommitResolves + 1),
+    )
+    expect(screen.getByRole('button', {name: 'Delete Selected (1)'})).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(hooks.client.commit).toHaveBeenCalledOnce()
+  })
+
+  it('does not let a stale eligibility failure clear loading for a new scope', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
+
+    let rejectEligibility!: (error: Error) => void
+    const pendingEligibility = new Promise<{_id: string; _type: string; title: string}[]>(
+      (_, reject) => {
+        rejectEligibility = reject
+      },
+    )
+    let resolveBlogDocs!: (docs: {_id: string; _type: string; title: string}[]) => void
+    let resolveBlogStrongRefs!: (docs: {_id: string; _type: string; title: string}[]) => void
+    const pendingBlogDocs = new Promise<{_id: string; _type: string; title: string}[]>(
+      (resolve) => {
+        resolveBlogDocs = resolve
+      },
+    )
+    const pendingBlogStrongRefs = new Promise<{_id: string; _type: string; title: string}[]>(
+      (resolve) => {
+        resolveBlogStrongRefs = resolve
+      },
+    )
+    let articleEligibleFetches = 1
+    const defaultFetch = hooks.client.fetch.getMockImplementation()!
+    hooks.client.fetch.mockImplementation((query: string, params?: {type?: string}) => {
+      if (params?.type === 'article' && query.includes('"hasWeakReferences"')) {
+        articleEligibleFetches += 1
+        if (articleEligibleFetches === 2) return pendingEligibility
+      }
+      if (params?.type === 'blog') {
+        return query.includes('"hasWeakReferences"') ? pendingBlogDocs : pendingBlogStrongRefs
+      }
+      return defaultFetch(query, params)
+    })
+
+    fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
+    await waitFor(() => expect(articleEligibleFetches).toBe(2))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
+    await waitFor(() => expect(screen.getByText('Loading...')).toBeTruthy())
+
+    rejectEligibility(new Error('verification failed'))
+    await waitFor(() => expect(screen.getByText('Loading...')).toBeTruthy())
+    expect(screen.queryByRole('button', {name: 'Select blog'})).toBeNull()
+
+    resolveBlogDocs([{_id: 'blog-1', _type: 'blog', title: 'Current blog'}])
+    resolveBlogStrongRefs([])
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select blog'})).toBeTruthy())
+    expect(screen.queryByText('Loading...')).toBeNull()
+    expect(hooks.client.commit).not.toHaveBeenCalled()
   })
 
   it('clears the selected documents and confirmation when the perspective changes', async () => {
