@@ -1,12 +1,19 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { useCurrentUser, useClient, usePerspective, isString } from 'sanity'
-import { Button, Card, Flex, Spinner, Stack, Text, useToast } from '@sanity/ui'
+import { useCurrentUser, useClient, usePerspective } from 'sanity'
+import { Button, Card, Flex, Spinner, Stack, Text } from '@sanity/ui'
 import { defineQuery } from 'groq'
 import type { BulkDeleteToolOptions } from '../types/BulkDeleteComponent.types'
 import { PermissionNotice } from './PermissionNotice'
 import { DocumentTypeSelect } from './DocumentTypeSelect'
 import { DocumentList } from './DocumentList'
 import { ConfirmDeleteDialog } from './ConfirmDeleteDialog'
+import {getPerspectiveFilter} from '../utils/perspective'
+
+type FeedbackMessage = {
+  status: 'success' | 'error'
+  title: string
+  description?: string
+}
 
 /**
  * BulkDeleteComponent provides a UI for bulk deleting documents in Sanity Studio.
@@ -25,30 +32,19 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   const [_, forceRender] = useState(0)
   const [stronglyReferencedDocs, setStronglyReferencedDocs] = useState<any[]>([])
   const [showConfirm, setShowConfirm] = useState(false)
+  const [feedback, setFeedback] = useState<FeedbackMessage>()
   const currentUser = useCurrentUser()
   const perspective = usePerspective()
-  const perspectiveName = perspective.selectedPerspectiveName || perspective.selectedPerspective
   const sanityClient = useClient({ apiVersion: '2025-05-29' })
-  const toast = useToast()
 
-  // Compute GROQ filter for the current perspective
-  const perspectiveMatch =
-    perspectiveName === 'published'
-      ? `!(_id in path("drafts.**") || _id in path("versions.**")) &&`
-      : perspectiveName === 'drafts'
-        ? `(_id in path("drafts.**")) &&`
-        : isString(perspectiveName)
-          ? `(_id in path("versions.${perspectiveName}.**")) &&`
-          : ''
+  // selectedPerspective can be an object for releases in newer Studio versions.
+  // selectedPerspectiveName is the stable name field shared by Studio v3-v6.
+  const perspectiveMatch = getPerspectiveFilter(perspective.selectedPerspectiveName)
 
   // Permission check
   const isAdmin = currentUser?.roles?.some(
     (role: any) => role.name === 'administrator' || config.roles?.includes(role.name)
   )
-  if (!isAdmin) {
-    const roles = config.roles ? Array.from(new Set([...config.roles, 'administrator'])) : ['administrator']
-    return <PermissionNotice roles={roles} />
-  }
 
   // Helper to fetch documents by reference count
   const fetchDocuments = async ({
@@ -72,16 +68,18 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
 
   // Fetch all unique document types from the dataset
   useEffect(() => {
+    if (!isAdmin) return
     const fetchTypes = async () => {
       const query = defineQuery(`array::unique(*[]._type)`)
       const data = await sanityClient.fetch(query, {}, { perspective: 'raw' })
       setTypesData(data)
     }
     fetchTypes()
-  }, [sanityClient])
+  }, [isAdmin, sanityClient])
 
   // Fetch documents of the selected type
   useEffect(() => {
+    if (!isAdmin) return
     if (!selectedType) {
       setDocumentsData([])
       setStronglyReferencedDocs([])
@@ -97,7 +95,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         setStronglyReferencedDocs(strongRefs)
       })
       .finally(() => setLoading(false))
-  }, [selectedType, sanityClient, perspectiveMatch, _])
+  }, [isAdmin, selectedType, sanityClient, perspectiveMatch, _])
 
   // Compute the list of document types available for deletion
   useEffect(() => {
@@ -167,19 +165,16 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         tx.delete(doc._id)
       })
       await tx.commit()
-      toast.push({
-                status: 'success',
-                title: `${selectedDocs.size} Documents Deleted`
-            })
+      setFeedback({status: 'success', title: `${selectedDocs.size} Documents Deleted`})
       setSelectedDocs(new Set())
       // Refresh documents after deletion
       const docs = await fetchDocuments({ type: selectedType, hasStrongRefs: false })
       setDocumentsData(docs)
     } catch (e) {
-      toast.push({
+      setFeedback({
         status: 'error',
         title: 'Error Deleting Documents',
-        description: e instanceof Error ? e.message : String(e)
+        description: e instanceof Error ? e.message : String(e),
       })
       console.error('Error deleting documents:', e)
     } finally {
@@ -187,12 +182,29 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     }
   }, [selectedDocs, sanityClient, selectedType, documentsData, perspectiveMatch])
 
+  if (!isAdmin) {
+    const roles = config.roles ? Array.from(new Set([...config.roles, 'administrator'])) : ['administrator']
+    return <PermissionNotice roles={roles} />
+  }
+
   return (
     <Card padding={4} radius={3} shadow={1} style={{ maxWidth: 500, margin: '2rem auto' }}>
-      <Stack space={4}>
+      <Stack style={{gap: 16}}>
         <Text size={2} weight="semibold">
           Bulk Delete Documents
         </Text>
+        {feedback && (
+          <Card
+            padding={3}
+            tone={feedback.status === 'error' ? 'critical' : 'positive'}
+            role={feedback.status === 'error' ? 'alert' : 'status'}
+          >
+            <Text>
+              {feedback.title}
+              {feedback.description ? `: ${feedback.description}` : ''}
+            </Text>
+          </Card>
+        )}
         <DocumentTypeSelect
           docTypes={docTypes}
           selectedType={selectedType}

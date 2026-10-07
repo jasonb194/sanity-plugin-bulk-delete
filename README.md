@@ -1,6 +1,19 @@
 # BulkDelete
 
-BulkDelete is a Sanity Studio v3/4 tool plugin that allows administrators (and optionally other roles) to safely bulk delete documents of a selected type from your dataset. It prevents deletion of documents that are strongly referenced elsewhere, and provides a clear UI for selecting, reviewing, and confirming deletions.
+BulkDelete is a Sanity Studio tool plugin for Sanity v3.76+, v4, v5, and v6. It allows administrators (and optionally other roles) to bulk delete documents of a selected type from your dataset. It prevents deletion of documents that are strongly referenced elsewhere, and provides a clear UI for selecting, reviewing, and confirming deletions.
+
+## Compatibility
+
+The plugin supports Sanity `^3.76.0 || ^4 || ^5 || ^6`. Sanity's host requirements vary by Studio version:
+
+| Sanity Studio | Host requirements |
+|---------------|-------------------|
+| v3.76+        | React and React DOM `^18.2` or `^19`; `@sanity/ui` v2 |
+| v4            | Node.js `>=20.19`; React and React DOM `^18.2` or `^19`; `@sanity/ui` v3 |
+| v5            | Node.js `>=20.19 <22` or `>=22.12`; React and React DOM `^19.2.2`; `@sanity/ui` v3 |
+| v6            | Node.js `>=22.12`; React and React DOM `^19.2.2`; `@sanity/ui` v4 |
+
+These are Sanity Studio host requirements, not a claim that every supported version has been individually tested with this plugin. See Sanity's [known package compatibility](https://www.sanity.io/docs/help/upgrade-packages), [v3 to v4 upgrade guide](https://www.sanity.io/docs/help/v3-to-v4), and [React 19 requirements](https://www.sanity.io/docs/help/react-19).
 
 ## Features
 
@@ -22,6 +35,7 @@ BulkDelete is a Sanity Studio v3/4 tool plugin that allows administrators (and o
 2. Add the plugin to your `sanity.config.ts`:
 
    ```ts
+   import {defineConfig} from 'sanity'
    import {BulkDelete} from 'sanity-plugin-bulk-delete'
 
    export default defineConfig({
@@ -57,6 +71,17 @@ BulkDelete is a Sanity Studio v3/4 tool plugin that allows administrators (and o
 
 ## Development
 
+Use Node.js 22.12 or newer for development; the development dependencies target Studio v6.
+
+```sh
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+GitHub Actions runs these checks on pushes and pull requests against Studio 3.76.0 and the latest v3, v4, v5, and v6 releases, with matching React and Sanity UI versions. It also installs the packed plugin in a separate consumer project and checks its CommonJS and ESM exports.
+
 - Components are modular and typed with TypeScript.
 - See `src/types/BulkDeleteComponent.types.ts` for prop and config interfaces.
 
@@ -66,4 +91,3 @@ MIT
 
 ---
 **Note:** Use with caution. Deleted documents cannot be recovered unless you have backups or use Sanity's history/versioning features.
-

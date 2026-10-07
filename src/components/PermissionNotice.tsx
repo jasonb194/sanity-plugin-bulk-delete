@@ -10,7 +10,7 @@ import type {PermissionNoticeProps} from '../types/BulkDeleteComponent.types'
 export function PermissionNotice({roles}: PermissionNoticeProps) {
   return (
     <Card padding={4} radius={3} shadow={1} style={{maxWidth: 500, margin: '2rem auto'}}>
-      <Stack space={4}>
+      <Stack style={{gap: 16}}>
         <Text size={2} weight="semibold">
           Tool can only be used by the following roles:{' '}
           {roles

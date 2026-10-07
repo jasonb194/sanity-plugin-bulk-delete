@@ -15,7 +15,7 @@ export function DocumentList({
 }: DocumentListProps) {
   return (
     <Box style={{maxHeight: 300, overflowY: 'auto'}}>
-      <Stack space={2}>
+      <Stack style={{gap: 8}}>
         {documentsData.map(doc => (
           <Flex key={doc._id} align="center" gap={2}>
             <Checkbox checked={isDocSelected(doc)} onChange={() => handleSelectDoc(doc._id)} />
