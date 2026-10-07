@@ -11,9 +11,9 @@ const hooks = vi.hoisted(() => ({
   projectId: 'project-a',
   dataset: 'dataset-a',
   client: {
-    fetch: vi.fn(async (query: string) => {
+    fetch: vi.fn(async (query: string, params?: {type?: string}) => {
       if (query.includes('array::unique')) return ['article', 'blog']
-      const type = query.includes('_type == "blog"') ? 'blog' : 'article'
+      const type = params?.type ?? 'article'
       const perspective = query.includes('_id in path("drafts.**")') ? 'drafts' : 'published'
       if (query.includes('"hasWeakReferences"'))
         return (
@@ -157,6 +157,11 @@ describe('BulkDeleteComponent permission hooks', () => {
     await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
     await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    expect(
+      hooks.client.fetch.mock.calls.some(
+        ([query, params]) => query.includes('_type == $type') && params?.type === 'article',
+      ),
+    ).toBe(true)
     fireEvent.click(screen.getByRole('button', {name: 'Select article'}))
     fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
     fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
@@ -274,7 +279,9 @@ describe('BulkDeleteComponent permission hooks', () => {
     fireEvent.click(screen.getByRole('button', {name: 'Delete Selected (1)'}))
 
     const defaultFetch = hooks.client.fetch.getMockImplementation()!
-    hooks.client.fetch.mockImplementationOnce((query: string) => defaultFetch(query))
+    hooks.client.fetch.mockImplementationOnce((query: string, params?: {type?: string}) =>
+      defaultFetch(query, params),
+    )
     hooks.client.fetch.mockRejectedValueOnce(new Error('network unavailable'))
     fireEvent.click(screen.getByRole('button', {name: 'Confirm delete'}))
 
@@ -305,8 +312,8 @@ describe('BulkDeleteComponent permission hooks', () => {
       },
     )
     const defaultFetch = hooks.client.fetch.getMockImplementation()!
-    hooks.client.fetch.mockImplementation((query: string) =>
-      query.includes('_type == "blog"') ? pendingBlogFetch : defaultFetch(query),
+    hooks.client.fetch.mockImplementation((query: string, params?: {type?: string}) =>
+      params?.type === 'blog' ? pendingBlogFetch : defaultFetch(query, params),
     )
     fireEvent.click(screen.getByRole('button', {name: 'Choose blog'}))
 

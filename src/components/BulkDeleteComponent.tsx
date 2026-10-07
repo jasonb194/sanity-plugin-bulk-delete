@@ -122,9 +122,9 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
         ? ''
         : ', "hasWeakReferences": count(*[references(^._id) && defined(_weak) && _weak == true]) > 0'
       const query = defineQuery(
-        `*[ ${perspectiveMatch} _type == "${type}" && ${refCountCondition}]{_id, _type, title, name${extraFields}}`
+        `*[ ${perspectiveMatch} _type == $type && ${refCountCondition}]{_id, _type, title, name${extraFields}}`
       )
-      return sanityClient.fetch(query, {}, { perspective: 'raw' })
+      return sanityClient.fetch(query, {type}, { perspective: 'raw' })
     },
     [perspectiveMatch, sanityClient],
   )
