@@ -85,6 +85,25 @@ GitHub Actions runs these checks on pushes and pull requests against Studio 3.76
 - Components are modular and typed with TypeScript.
 - See `src/types/BulkDeleteComponent.types.ts` for prop and config interfaces.
 
+## Releasing
+
+Releases are published to npm when a `v*` tag is pushed. Before the first release, configure npm trusted publishing for `sanity-plugin-bulk-delete` in the package's npm settings:
+
+- Publisher: GitHub Actions
+- Owner or user: `jasonb194`
+- Repository: `sanity-plugin-bulk-delete`
+- Workflow filename: `publish.yml`
+- Grant this publisher permission to publish directly to the package.
+
+No npm token secret is required. The workflow uses GitHub's OIDC identity and publishes with provenance. To release a version, update the `version` in `package.json`, commit and push that change, then create and push a matching tag. For example, for version `1.1.2`:
+
+```sh
+git tag v1.1.2
+git push origin v1.1.2
+```
+
+The workflow checks that the tag exactly matches `v` plus the package version before installing dependencies, building through `prepublishOnly`, and publishing.
+
 ## License
 
 MIT
