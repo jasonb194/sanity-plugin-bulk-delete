@@ -87,7 +87,9 @@ GitHub Actions runs these checks on pushes and pull requests against Studio 3.76
 
 ## Releasing
 
-Releases are published to npm when a `v*` tag is pushed. Before the first release, configure npm trusted publishing for `sanity-plugin-bulk-delete` in the package's npm settings:
+Releases are published to npm when a valid SemVer tag beginning with `v` is pushed. The tag sets the published package version, so you do not need to edit `package.json` for each release. For example, pushing `v1.2.3` publishes version `1.2.3`. The workflow updates `package.json` only in its temporary checkout to build and publish that version; it does not commit the change back to the repository.
+
+Before the first release, configure npm trusted publishing for `sanity-plugin-bulk-delete` in the package's npm settings:
 
 - Publisher: GitHub Actions
 - Owner or user: `jasonb194`
@@ -95,14 +97,16 @@ Releases are published to npm when a `v*` tag is pushed. Before the first releas
 - Workflow filename: `publish.yml`
 - Grant this publisher permission to publish directly to the package.
 
-No npm token secret is required. The workflow uses GitHub's OIDC identity and publishes with provenance. To release a version, update the `version` in `package.json`, commit and push that change, then create and push a matching tag. For example, for version `1.1.2`:
+No npm token secret is required. The workflow uses GitHub's OIDC identity and publishes with provenance. Create and push a tag for the version you want to publish:
+
+Restrict who can create, update, or delete `v*` tags in the repository's GitHub rulesets to release maintainers. Each valid matching tag starts a release workflow and publishes that version.
 
 ```sh
-git tag v1.1.2
-git push origin v1.1.2
+git tag v1.2.3
+git push origin v1.2.3
 ```
 
-The workflow checks that the tag exactly matches `v` plus the package version before installing dependencies, building through `prepublishOnly`, and publishing.
+Use a valid SemVer version in the tag, such as `v1.2.3` or `v1.3.0-beta.1`. Stable versions use npm's `latest` dist-tag; prereleases use `next`, so consumers can install them with `npm install sanity-plugin-bulk-delete@next`. npm versions are immutable: a version already published cannot be reused.
 
 ## License
 
