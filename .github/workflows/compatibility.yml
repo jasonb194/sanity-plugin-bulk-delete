@@ -1,0 +1,103 @@
+name: Studio compatibility
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    name: Studio ${{ matrix.studio }} / React ${{ matrix.reactMajor }} / UI ${{ matrix.uiMajor }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - studio: 3.76 baseline
+            sanity: 3.76.0
+            react: ^18.3.1
+            reactMajor: 18
+            reactTypes: ^18.3.24
+            reactDomTypes: ^18.3.7
+            ui: ^2.15.18
+            uiMajor: 2
+          - studio: latest 3
+            sanity: '3'
+            react: ^19.2.2
+            reactMajor: 19
+            reactTypes: ^19.1.6
+            reactDomTypes: ^19.2.2
+            ui: ^2.15.18
+            uiMajor: 2
+          - studio: latest 4
+            sanity: '4'
+            react: ^19.2.2
+            reactMajor: 19
+            reactTypes: ^19.1.6
+            reactDomTypes: ^19.2.2
+            ui: ^3.0.0
+            uiMajor: 3
+          - studio: latest 5
+            sanity: '5'
+            react: ^19.2.2
+            reactMajor: 19
+            reactTypes: ^19.1.6
+            reactDomTypes: ^19.2.2
+            ui: ^3.0.0
+            uiMajor: 3
+          - studio: latest 6
+            sanity: '6'
+            react: ^19.2.2
+            reactMajor: 19
+            reactTypes: ^19.1.6
+            reactDomTypes: ^19.2.2
+            ui: ^4.3.3
+            uiMajor: 4
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install matrix dependencies
+        run: |
+          npm pkg set \
+            "devDependencies.sanity=${{ matrix.sanity }}" \
+            "devDependencies.@sanity/ui=${{ matrix.ui }}" \
+            "devDependencies.react=${{ matrix.react }}" \
+            "devDependencies.react-dom=${{ matrix.react }}" \
+            "devDependencies.@types/react=${{ matrix.reactTypes }}" \
+            "devDependencies.@types/react-dom=${{ matrix.reactDomTypes }}"
+          npm install --no-package-lock --no-audit --no-fund
+
+      - name: Test and build
+        run: |
+          npx eslint tests src/utils/perspective.ts --max-warnings=0
+          npm run test
+          npm run typecheck
+          npm run build
+
+      - name: Pack and install as a Studio consumer
+        env:
+          SANITY_VERSION: ${{ matrix.sanity }}
+          REACT_VERSION: ${{ matrix.react }}
+          UI_VERSION: ${{ matrix.ui }}
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP" --json > "$RUNNER_TEMP/pack.json"
+          TARBALL="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1]))[0].filename)" "$RUNNER_TEMP/pack.json")"
+          mkdir "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          npm init -y
+          npm install --no-package-lock --no-audit --no-fund \
+            "$RUNNER_TEMP/$TARBALL" \
+            "sanity@$SANITY_VERSION" \
+            "@sanity/ui@$UI_VERSION" \
+            "react@$REACT_VERSION" \
+            "react-dom@$REACT_VERSION" \
+            'styled-components@^6.1.19'
+          node -e "if (!require('sanity-plugin-bulk-delete').BulkDelete) process.exit(1)"
+          node --input-type=module -e "import {BulkDelete} from 'sanity-plugin-bulk-delete'; if (!BulkDelete) process.exit(1)"

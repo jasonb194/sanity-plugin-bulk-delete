@@ -1,7 +1,6 @@
 import {definePlugin} from 'sanity'
 import {BulkDeleteComponent} from './components/BulkDeleteComponent'
 import type {BulkDeleteToolOptions} from './types/BulkDeleteComponent.types'
-import {ToastProvider} from '@sanity/ui'
 
 /**
  * Sanity plugin definition for the Bulk Delete tool.
@@ -14,11 +13,7 @@ export const BulkDelete = definePlugin<BulkDeleteToolOptions>(config => ({
       name: 'bulk-delete',
       title: 'Bulk Delete',
       component: function BulkDeleteTool() {
-        return (
-          <ToastProvider>
-            <BulkDeleteComponent {...config} />
-          </ToastProvider>
-        )
+        return <BulkDeleteComponent {...config} />
       },
     },
   ],

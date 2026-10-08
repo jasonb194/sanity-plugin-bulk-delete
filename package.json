@@ -39,17 +39,21 @@
     "link-watch": "plugin-kit link-watch",
     "lint": "eslint .",
     "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "watch": "pkg-utils watch --strict"
   },
   "dependencies": {
     "@sanity/incompatible-plugin": "^1.0.5",
-    "@sanity/ui": "^2.15.18",
     "groq": "^3.90.0"
   },
   "devDependencies": {
     "@sanity/pkg-utils": "^7.2.3",
     "@sanity/plugin-kit": "^4.0.19",
+    "@sanity/ui": "^4.3.3",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.2.2",
     "@typescript-eslint/eslint-plugin": "^8.33.0",
     "@typescript-eslint/parser": "^8.33.0",
     "eslint": "^8.57.1",
@@ -58,13 +62,22 @@
     "eslint-plugin-prettier": "^5.4.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "groq-js": "^2.0.0",
+    "jsdom": "^30.1.2",
     "prettier": "^3.5.3",
-    "typescript": "^5.8.3"
+    "react": "^19.2.2",
+    "react-dom": "^19.2.2",
+    "sanity": "^6.18.0",
+    "styled-components": "^6.1.19",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   },
   "peerDependencies": {
+    "@sanity/ui": "^2.15.18 || ^3.0.0 || ^4.0.0",
     "react": "^18 || ^19",
     "react-dom": "^18 || ^19",
-    "sanity": "^3.76.0 || ^4.0.0"
+    "sanity": "^3.76.0 || ^4.0.0 || ^5.0.0 || ^6.0.0",
+    "styled-components": "^6.1.0"
   },
   "engines": {
     "node": ">=18"
