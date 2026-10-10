@@ -5,6 +5,7 @@ import {
   compareVersions,
   parseStableVersion,
   planRelease,
+  planReleaseForTarget,
 } from './calculate-release.mjs'
 
 const targetSha = 'a'.repeat(40)
@@ -168,5 +169,51 @@ describe('release baseline and retry planning', () => {
       version: '',
       pendingStage: {name: 'npm-stage/v1.1.2', sha: targetSha},
     })
+  })
+
+  it('reports a pending stage without selecting a baseline or reading the commit range', () => {
+    const result = planReleaseForTarget({
+      tags: [],
+      npm: {version: 'invalid', gitHead: 'e'.repeat(40)},
+      targetSha,
+      registryVersions: new Set(),
+      pendingStages: [{name: 'npm-stage/v1.1.2', version: '1.1.2', sha: targetSha}],
+      isAncestor: () => {
+        throw new Error('baseline selection should be skipped')
+      },
+      getCommits: () => {
+        throw new Error('commit range lookup should be skipped')
+      },
+    })
+
+    expect(result).toMatchObject({
+      commits: [],
+      plan: {
+        baselineVersion: '',
+        baselineSha: '',
+        shouldPublish: false,
+        shouldTag: false,
+        version: '',
+        pendingStage: {name: 'npm-stage/v1.1.2', sha: targetSha},
+      },
+    })
+  })
+
+  it.each([
+    [{version: 'invalid', gitHead: npmSha}, 'invalid stable version'],
+    [{version: '1.1.1'}, 'no valid gitHead'],
+    [{version: '1.1.1', gitHead: 'e'.repeat(40)}, 'not an ancestor'],
+  ])('still fails closed without a pending stage for npm latest %j', (npm, expectedError) => {
+    expect(() =>
+      planReleaseForTarget({
+        tags: [],
+        npm,
+        targetSha,
+        registryVersions: new Set(),
+        pendingStages: [],
+        isAncestor,
+        getCommits: () => [],
+      }),
+    ).toThrow(expectedError)
   })
 })

@@ -187,6 +187,44 @@ export function planRelease({
   }
 }
 
+export function planReleaseForTarget({
+  tags,
+  npm,
+  targetSha,
+  registryVersions,
+  pendingStages = [],
+  isAncestor: ancestorCheck,
+  getCommits = commitsAfter,
+}) {
+  if (pendingStages.length > 0) {
+    return {
+      plan: planRelease({
+        tags,
+        npm,
+        targetSha,
+        commits: [],
+        registryVersions,
+        pendingStages,
+        isAncestor: ancestorCheck,
+      }),
+      commits: [],
+    }
+  }
+
+  const baseline = chooseBaseline({tags, npm, targetSha, isAncestor: ancestorCheck})
+  const commits = getCommits(baseline.sha, targetSha)
+  const plan = planRelease({
+    tags,
+    npm,
+    targetSha,
+    commits,
+    registryVersions,
+    pendingStages,
+    isAncestor: ancestorCheck,
+  })
+  return {plan, commits}
+}
+
 function main() {
   const targetSha = process.env.TARGET_SHA
   const npm = JSON.parse(readFileSync('npm-latest.json', 'utf8'))
@@ -199,13 +237,10 @@ function main() {
 
   const tags = reachableStableTags(targetSha)
   const pendingStages = pendingStageTags()
-  const baseline = chooseBaseline({tags, npm, targetSha, isAncestor})
-  const commits = commitsAfter(baseline.sha, targetSha)
-  const plan = planRelease({
+  const {plan, commits} = planReleaseForTarget({
     tags,
     npm,
     targetSha,
-    commits,
     registryVersions,
     pendingStages,
     isAncestor,
