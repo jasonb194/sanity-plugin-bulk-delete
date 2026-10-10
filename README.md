@@ -85,6 +85,29 @@ GitHub Actions runs these checks on pushes and pull requests against Studio 3.76
 - Components are modular and typed with TypeScript.
 - See `src/types/BulkDeleteComponent.types.ts` for prop and config interfaces.
 
+## Releasing
+
+Pushes to `main` trigger release calculation from commits since the last release baseline. Use Conventional Commit messages to select the SemVer bump:
+
+- `fix:` and `perf:` publish a patch release.
+- `feat:` publishes a minor release.
+- Add `!` before the colon, or include a `BREAKING CHANGE:` footer, to publish a major release.
+- Other commit types, such as `docs:`, `ci:`, `test:`, and `chore:`, do not publish by themselves.
+
+The highest reachable stable `vX.Y.Z` tag is the baseline after the first automated release. On the first run, CI uses the currently published npm version and its `gitHead` as the baseline, so older commits are not included in the calculation. CI publishes only when the range contains a release-worthy commit. It updates `package.json` only in the temporary build checkout; no package version edit or version commit is needed. After npm accepts the package, CI creates and pushes the matching `vX.Y.Z` tag at the commit that triggered the release. If npm accepts a package but tag creation fails, rerunning that same commit creates the missing tag without attempting to republish the immutable version.
+
+Before the first release, configure npm trusted publishing for `sanity-plugin-bulk-delete` in the package's npm settings:
+
+- Publisher: GitHub Actions
+- Owner or user: `jasonb194`
+- Repository: `sanity-plugin-bulk-delete`
+- Workflow filename: `publish.yml`
+- Grant this publisher permission to publish directly to the package.
+
+No npm token secret is required. The workflow uses GitHub's OIDC identity and publishes with provenance. Configure repository rules for generated release tags so only release maintainers and the GitHub Actions workflow can create, update, or delete `v*` tags. The workflow publishes in the same run that calculates the release because tags pushed with GitHub's built-in token do not start another workflow.
+
+Stable versions use npm's default `latest` dist-tag. npm versions are immutable, and CI checks the registry before publishing so it will not try to reuse a version that already exists.
+
 ## License
 
 MIT
