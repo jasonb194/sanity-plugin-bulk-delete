@@ -151,4 +151,22 @@ describe('release baseline and retry planning', () => {
       }),
     ).toThrow('already exists')
   })
+
+  it('blocks a new release while any npm stage is pending', () => {
+    const plan = planRelease({
+      tags: [{name: 'v1.1.1', sha: npmSha}],
+      npm: {version: '1.1.1', gitHead: npmSha},
+      targetSha,
+      commits: ['fix: patch issue'],
+      registryVersions: new Set(['1.1.1']),
+      pendingStages: [{name: 'npm-stage/v1.1.2', version: '1.1.2', sha: targetSha}],
+      isAncestor,
+    })
+    expect(plan).toMatchObject({
+      shouldPublish: false,
+      shouldTag: false,
+      version: '',
+      pendingStage: {name: 'npm-stage/v1.1.2', sha: targetSha},
+    })
+  })
 })

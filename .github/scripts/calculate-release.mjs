@@ -97,6 +97,26 @@ function reachableStableTags(targetSha) {
   })
 }
 
+function pendingStageTags() {
+  const refs = git([
+    'for-each-ref',
+    '--format=%(refname:short)%00%(*objectname)',
+    'refs/tags/npm-stage',
+  ])
+  if (!refs) return []
+  return refs.split('\n').map((row) => {
+    const [name, peeledSha] = row.split('\0')
+    const match = /^npm-stage\/v(.+)$/.exec(name ?? '')
+    if (!match || !parseStableVersion(match[1])) {
+      throw new Error(`Invalid pending npm stage tag: ${name ?? '(missing)'}`)
+    }
+    const sha = peeledSha || git(['rev-parse', `${name}^{commit}`])
+    if (!/^[0-9a-f]{40}$/i.test(sha))
+      throw new Error(`Invalid commit for pending npm stage tag ${name}`)
+    return {name, version: match[1], sha}
+  })
+}
+
 function commitsAfter(sha, targetSha) {
   const raw = git(['log', '--format=%B%x00', `${sha}..${targetSha}`])
   return raw
@@ -118,8 +138,20 @@ export function planRelease({
   targetSha,
   commits,
   registryVersions,
+  pendingStages = [],
   isAncestor: ancestorCheck,
 }) {
+  if (pendingStages.length > 0) {
+    return {
+      baselineVersion: '',
+      baselineSha: '',
+      shouldPublish: false,
+      shouldTag: false,
+      version: '',
+      pendingStage: pendingStages[0],
+    }
+  }
+
   const baseline = chooseBaseline({tags, npm, targetSha, isAncestor: ancestorCheck})
   const nextVersion = calculateNextVersion(baseline.version, commits)
   const hasTag = tags.some(({name}) => name === `v${baseline.version}`)
@@ -166,6 +198,7 @@ function main() {
   }
 
   const tags = reachableStableTags(targetSha)
+  const pendingStages = pendingStageTags()
   const baseline = chooseBaseline({tags, npm, targetSha, isAncestor})
   const commits = commitsAfter(baseline.sha, targetSha)
   const plan = planRelease({
@@ -174,6 +207,7 @@ function main() {
     targetSha,
     commits,
     registryVersions,
+    pendingStages,
     isAncestor,
   })
   appendFileSync(
@@ -190,9 +224,11 @@ function main() {
   console.log(
     plan.shouldPublish
       ? `Releasing ${plan.version} from ${plan.baselineVersion} (${commits.length} commits)`
-      : plan.shouldTag
-        ? `Recovering missing tag v${plan.version} for already-published npm version`
-        : `No release-worthy commits since ${plan.baselineVersion}`,
+      : plan.pendingStage
+        ? `Pending npm stage ${plan.pendingStage.name} at ${plan.pendingStage.sha}; finalize or clear it before another release`
+        : plan.shouldTag
+          ? `Recovering missing tag v${plan.version} for already-published npm version`
+          : `No release-worthy commits since ${plan.baselineVersion}`,
   )
 }
 
