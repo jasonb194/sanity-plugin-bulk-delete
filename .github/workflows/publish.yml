@@ -22,6 +22,15 @@ on:
         type: boolean
         required: false
         default: false
+      stage_status:
+        description: Leave not-clearing for finalize; choose the exact npm status when clearing
+        type: choice
+        options:
+          - not-clearing
+          - rejected
+          - missing
+        required: true
+        default: not-clearing
 
 permissions: {}
 
@@ -289,5 +298,6 @@ jobs:
       - name: Clear pending marker with explicit confirmation
         env:
           CONFIRM_CLEAR: ${{ inputs.confirm_clear }}
+          STAGE_STATUS: ${{ inputs.stage_status }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: node .github/scripts/finalize-stage.mjs clear "$RELEASE_VERSION"

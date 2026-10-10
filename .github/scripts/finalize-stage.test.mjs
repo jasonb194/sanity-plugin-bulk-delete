@@ -3,10 +3,101 @@ import {execFileSync} from 'node:child_process'
 import {mkdtempSync, rmSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {planFinalization, planPublishedRecovery, tagRefs} from './finalize-stage.mjs'
+import {
+  isDefiniteNpm404,
+  planFinalization,
+  planMarkerClear,
+  planPublishedRecovery,
+  readPublishedVersion,
+  tagRefs,
+} from './finalize-stage.mjs'
 
 const sha = 'a'.repeat(40)
 const marker = {name: 'npm-stage/v1.1.2', sha}
+
+describe('pending marker clearing', () => {
+  const args = {
+    version: '1.1.2',
+    status: 'rejected',
+    confirmed: 'true',
+    pendingStages: [marker],
+  }
+
+  it('requires an explicit rejected or missing npm stage status', () => {
+    for (const status of [undefined, '', 'pending', 'approved', 'not-clearing', 'invalid']) {
+      expect(() => planMarkerClear({...args, status})).toThrow(
+        'STAGE_STATUS must be rejected or missing',
+      )
+    }
+    expect(planMarkerClear(args)).toBe('npm-stage/v1.1.2')
+    expect(planMarkerClear({...args, status: 'missing'})).toBe('npm-stage/v1.1.2')
+  })
+
+  it('requires confirmation and an existing Git marker', () => {
+    expect(() => planMarkerClear({...args, confirmed: 'false'})).toThrow('Set CONFIRM_CLEAR=true')
+    expect(() => planMarkerClear({...args, pendingStages: []})).toThrow(
+      'Pending stage marker npm-stage/v1.1.2 does not exist',
+    )
+  })
+
+  it('refuses to clear a marker for a version already published on npm', () => {
+    expect(() => planMarkerClear({...args, publishedVersion: '1.1.2'})).toThrow(
+      'npm 1.1.2 is already published; finalize its release instead of clearing its marker',
+    )
+  })
+
+  it('treats only an explicit npm E404 as an unpublished version', () => {
+    expect(isDefiniteNpm404({status: 1, stderr: 'npm error code E404\nnpm error 404'})).toBe(true)
+    expect(isDefiniteNpm404({status: 1, stderr: 'npm error code E401'})).toBe(false)
+    expect(isDefiniteNpm404({status: 1, stderr: 'npm error ECONNRESET'})).toBe(false)
+    expect(isDefiniteNpm404({stderr: 'npm error code E404'})).toBe(false)
+  })
+
+  it('confirms a version 404 against the readable package version list', () => {
+    const calls = []
+    const run = (_command, args) => {
+      calls.push(args)
+      if (calls.length === 1) {
+        throw Object.assign(new Error('version missing'), {
+          status: 1,
+          stderr: 'npm error code E404',
+        })
+      }
+      return JSON.stringify(['1.1.1'])
+    }
+
+    expect(readPublishedVersion('sanity-plugin-bulk-delete', '1.1.2', run)).toBeUndefined()
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toEqual(['view', 'sanity-plugin-bulk-delete', 'versions', '--json'])
+  })
+
+  it('fails closed if the package version list cannot confirm an exact 404', () => {
+    let callCount = 0
+    const run = () => {
+      callCount += 1
+      throw Object.assign(new Error('registry failure'), {
+        status: 1,
+        stderr: callCount === 1 ? 'npm error code E404' : 'npm error code E401',
+      })
+    }
+
+    expect(() => readPublishedVersion('sanity-plugin-bulk-delete', '1.1.2', run)).toThrow(
+      'refusing to clear marker',
+    )
+    expect(callCount).toBe(2)
+  })
+
+  it('fails closed on registry auth or transport errors', () => {
+    for (const stderr of ['npm error code E401', 'npm error ECONNRESET']) {
+      const run = () => {
+        throw Object.assign(new Error('registry failure'), {status: 1, stderr})
+      }
+      expect(() => readPublishedVersion('sanity-plugin-bulk-delete', '1.1.2', run)).toThrow(
+        'refusing to clear marker',
+      )
+    }
+  })
+})
 
 describe('git tag lookup', () => {
   it('matches version tags with a glob and keeps npm-stage prefix lookup intact', () => {

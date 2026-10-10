@@ -102,6 +102,75 @@ export function planPublishedRecovery({
   }
 }
 
+export function planMarkerClear({version, status, confirmed, pendingStages, publishedVersion}) {
+  validVersion(version)
+  if (status !== 'rejected' && status !== 'missing') {
+    throw new Error('STAGE_STATUS must be rejected or missing after checking npm')
+  }
+  if (confirmed !== 'true') {
+    throw new Error(
+      'Set CONFIRM_CLEAR=true only after inspecting npm and confirming this stage should be cleared',
+    )
+  }
+
+  const marker = `npm-stage/v${version}`
+  if (!pendingStages.some(({name}) => name === marker)) {
+    throw new Error(`Pending stage marker ${marker} does not exist`)
+  }
+  if (publishedVersion === version) {
+    throw new Error(
+      `npm ${version} is already published; finalize its release instead of clearing its marker`,
+    )
+  }
+  return marker
+}
+
+export function isDefiniteNpm404(error) {
+  const stderr = String(error?.stderr ?? '')
+  return (
+    error?.status !== null &&
+    error?.status !== undefined &&
+    error.status !== 0 &&
+    /npm\s+(?:error|ERR!)\s+code E404\b/i.test(stderr)
+  )
+}
+
+export function readPublishedVersion(packageName, version, run = execFileSync) {
+  try {
+    const raw = run('npm', ['view', `${packageName}@${version}`, 'version', '--json'], {
+      encoding: 'utf8',
+    })
+    const publishedVersion = JSON.parse(raw)
+    if (publishedVersion !== version) {
+      throw new Error(`npm returned ${publishedVersion ?? '(missing)'}, expected ${version}`)
+    }
+    return publishedVersion
+  } catch (error) {
+    if (!isDefiniteNpm404(error)) {
+      throw new Error(
+        `Unable to verify npm publication state for ${packageName}@${version}; refusing to clear marker`,
+        {cause: error},
+      )
+    }
+  }
+
+  try {
+    const rawVersions = run('npm', ['view', packageName, 'versions', '--json'], {
+      encoding: 'utf8',
+    })
+    const publishedVersions = JSON.parse(rawVersions)
+    if (!Array.isArray(publishedVersions)) {
+      throw new Error('npm returned an invalid version list')
+    }
+    return publishedVersions.includes(version) ? version : undefined
+  } catch (error) {
+    throw new Error(
+      `Unable to confirm ${packageName} is readable on npm after a version lookup 404; refusing to clear marker`,
+      {cause: error},
+    )
+  }
+}
+
 function git(args) {
   return execFileSync('git', args, {encoding: 'utf8'}).trim()
 }
@@ -123,16 +192,19 @@ function readRegistryPackage(name, version) {
 }
 
 function clearMarker(version) {
-  validVersion(version)
-  if (process.env.CONFIRM_CLEAR !== 'true') {
-    throw new Error(
-      'Set CONFIRM_CLEAR=true only after inspecting npm and confirming this stage should be cleared',
-    )
+  const clearArgs = {
+    version,
+    status: process.env.STAGE_STATUS,
+    confirmed: process.env.CONFIRM_CLEAR,
+    pendingStages: tagRefs('npm-stage'),
   }
-  const marker = `npm-stage/v${version}`
-  if (!tagRefs('npm-stage').some(({name}) => name === marker)) {
-    throw new Error(`Pending stage marker ${marker} does not exist`)
-  }
+  planMarkerClear(clearArgs)
+
+  const publishedVersion = readPublishedVersion(process.env.PACKAGE_NAME, version)
+  const marker = planMarkerClear({
+    ...clearArgs,
+    publishedVersion,
+  })
   git(['push', 'origin', `:refs/tags/${marker}`])
   console.log(`Cleared pending stage marker ${marker}`)
 }
