@@ -94,7 +94,11 @@ Pushes to `main` trigger release calculation from commits since the last release
 - Add `!` before the colon, or include a `BREAKING CHANGE:` footer, to publish a major release.
 - Other commit types, such as `docs:`, `ci:`, `test:`, and `chore:`, do not publish by themselves.
 
-The highest reachable stable `vX.Y.Z` tag is the baseline after the first automated release. On the first run, CI uses the currently published npm version and its `gitHead` as the baseline, so older commits are not included in the calculation. CI publishes only when the range contains a release-worthy commit. It updates `package.json` only in the temporary build checkout; no package version edit or version commit is needed. After npm accepts the package, CI creates and pushes the matching `vX.Y.Z` tag at the commit that triggered the release. If npm accepts a package but tag creation fails, rerunning that same commit creates the missing tag without attempting to republish the immutable version.
+The highest reachable stable `vX.Y.Z` tag is the baseline after the first automated release. On the first run, CI uses the currently published npm version and its `gitHead` as the baseline, so older commits are not included in the calculation. CI stages a package only when the range contains a release-worthy commit. It updates `package.json` only in the temporary build checkout; no package version edit or version commit is needed. Before submitting to npm, CI creates the `npm-stage/vX.Y.Z` marker at the release commit. That marker reserves the version and blocks subsequent automatic releases until the stage is finalized or explicitly cleared.
+
+If npm already contains the stable version at the exact `main` commit but its `vX.Y.Z` tag is missing, CI can recover the tag after verifying the registry metadata. It will not do this while a pending stage marker exists.
+
+After CI reports a successful stage, review and approve it in npm. Then go to **Actions → Publish to npm → Run workflow**, select the `main` branch, choose `finalize`, and enter the exact version without the `v` prefix. The workflow verifies the published version and its `gitHead` against the pending marker, creates the matching `vX.Y.Z` tag, then removes the marker. Re-running finalization is safe after it succeeds. Before clearing a stage, inspect the exact `sanity-plugin-bulk-delete` version in npm's staged versions and confirm npm shows it as rejected or that no staged entry exists for that exact package version (`missing`) and the version is not already published. Then run the workflow with action `clear`, enter that exact version, select the observed `stage_status` (`rejected` or `missing`), and check `confirm_clear`. The workflow relies on the selected status as an operator attestation because npm's stage inspection commands require interactive authentication and cannot be checked by the OIDC workflow. It also checks the public registry and refuses to clear an already-published version; registry errors other than a definite version-not-found response stop the job. Clearing only removes the Git marker; it does not publish or create a release tag. Do not clear a stage that npm still shows as pending or approved.
 
 Before the first release, configure npm trusted publishing for `sanity-plugin-bulk-delete` in the package's npm settings:
 
@@ -102,9 +106,10 @@ Before the first release, configure npm trusted publishing for `sanity-plugin-bu
 - Owner or user: `jasonb194`
 - Repository: `sanity-plugin-bulk-delete`
 - Workflow filename: `publish.yml`
-- Grant this publisher permission to publish directly to the package.
+- Leave Environment blank.
+- Leave direct publishing (`npm publish`) disabled. npm allows `npm stage publish` for trusted publishers by default.
 
-No npm token secret is required. The workflow uses GitHub's OIDC identity and publishes with provenance. Configure repository rules for generated release tags so only release maintainers and the GitHub Actions workflow can create, update, or delete `v*` tags. The workflow publishes in the same run that calculates the release because tags pushed with GitHub's built-in token do not start another workflow.
+No npm token secret is required. The staging job uses GitHub's OIDC identity and npm provenance. Staged publishing requires npm 11.15.0 or later; the workflow installs that CLI version under Node 24. Configure repository rules so only release maintainers and the GitHub Actions workflow can create or delete `npm-stage/v*` reservation tags; protect finalized `v*` release tags from updates and deletion. The workflow uses GitHub's built-in token, so pushing these tags does not start another workflow.
 
 Stable versions use npm's default `latest` dist-tag. npm versions are immutable, and CI checks the registry before publishing so it will not try to reuse a version that already exists.
 
