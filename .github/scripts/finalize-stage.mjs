@@ -106,7 +106,7 @@ function git(args) {
   return execFileSync('git', args, {encoding: 'utf8'}).trim()
 }
 
-function tagRefs(prefix) {
+export function tagRefs(prefix) {
   const raw = git(['for-each-ref', '--format=%(refname:short)', `refs/tags/${prefix}`])
   if (!raw) return []
   return raw.split('\n').map((name) => ({name, sha: git(['rev-parse', `${name}^{commit}`])}))
@@ -144,7 +144,7 @@ function finalize(version) {
   const plan = planFinalization({
     version,
     pendingStages: tagRefs('npm-stage'),
-    liveTags: tagRefs('v'),
+    liveTags: tagRefs('v*'),
     registryVersion: registry.version,
     registryGitHead: registry.gitHead,
   })
@@ -174,7 +174,7 @@ function recover(version) {
     version,
     targetSha,
     pendingStages: tagRefs('npm-stage'),
-    liveTags: tagRefs('v'),
+    liveTags: tagRefs('v*'),
     registryVersion: registry.version,
     registryGitHead: registry.gitHead,
   })
