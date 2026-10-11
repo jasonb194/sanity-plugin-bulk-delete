@@ -84,7 +84,9 @@ export function CompatibleCard({
         // UI 5 combines the old numeric padding and radius into a density.
         // Its compact preset uses space 3/radius 2; regular uses space 4/radius 3.
         density: padding && padding <= 3 ? 'compact' : 'regular',
-        tone: tone === 'critical' ? 'critical' : 'neutral',
+        // UI 5 supports every semantic tone used by the legacy Card API.
+        // Keep success and warning cards distinct, and use neutral by default.
+        tone: tone ?? 'neutral',
         role,
       }
     : {style, padding, radius, shadow, tone, role}
