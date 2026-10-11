@@ -56,6 +56,14 @@ jobs:
             reactDomTypes: ^19.2.2
             ui: ^4.3.3
             uiMajor: 4
+          - studio: latest 6 / UI alpha
+            sanity: '6'
+            react: ^19.2.8
+            reactMajor: 19
+            reactTypes: ^19.2.2
+            reactDomTypes: ^19.2.2
+            ui: 5.0.0-alpha.14
+            uiMajor: 5 alpha.14
 
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +80,7 @@ jobs:
             "devDependencies.react-dom=${{ matrix.react }}" \
             "devDependencies.@types/react=${{ matrix.reactTypes }}" \
             "devDependencies.@types/react-dom=${{ matrix.reactDomTypes }}"
-          npm install --no-package-lock --no-audit --no-fund
+          npm install --no-package-lock --no-audit --no-fund --strict-peer-deps
 
       - name: Test and build
         run: |
@@ -93,6 +101,7 @@ jobs:
           cd "$RUNNER_TEMP/consumer"
           npm init -y
           npm install --no-package-lock --no-audit --no-fund \
+            --strict-peer-deps \
             "$RUNNER_TEMP/$TARBALL" \
             "sanity@$SANITY_VERSION" \
             "@sanity/ui@$UI_VERSION" \
