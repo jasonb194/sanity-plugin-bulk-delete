@@ -422,7 +422,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   }
 
   return (
-    <Card padding={4} radius={3} shadow={1} style={{ maxWidth: 500, margin: '2rem auto' }}>
+    <Card padding={4} radius={3} shadow={1} style={{ width: '100%', boxSizing: 'border-box', margin: '2rem auto' }}>
       <Stack style={{gap: 16}}>
         <Text size={2} weight="semibold">
           Bulk Delete Documents

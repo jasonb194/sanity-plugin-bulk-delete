@@ -57,6 +57,17 @@ export interface DocumentTypeSelectProps {
 }
 
 /**
+ * Document fields used by the bulk delete list.
+ */
+export interface BulkDeleteDocument {
+  _id: string
+  _type: string
+  title?: string
+  name?: string
+  hasWeakReferences?: boolean
+}
+
+/**
  * Props for the {@link DocumentList} component.
  * Used for rendering the list of documents with selection checkboxes.
  * @public
@@ -65,17 +76,17 @@ export interface DocumentListProps {
   /**
    * Array of documents available for selection and deletion.
    */
-  documentsData: any[]
+  documentsData: BulkDeleteDocument[]
   /**
    * Array of documents that have strong references and cannot be deleted.
    */
-  stronglyReferencedDocs: any[]
+  stronglyReferencedDocs: BulkDeleteDocument[]
   /**
    * Function to check if a document is currently selected.
    * @param doc - The document object to check.
    * @returns `true` if the document is selected, otherwise `false`.
    */
-  isDocSelected: (doc: any) => boolean
+  isDocSelected: (doc: BulkDeleteDocument) => boolean
   /**
    * Callback to select or deselect a document by its ID.
    * @param id - The document's unique ID.
