@@ -1,7 +1,6 @@
 import React from 'react'
-import {Box, Text} from '@sanity/ui'
+import {Dialog, Flex, Button, Box, Text} from '@sanity/ui'
 import type {ConfirmDeleteDialogProps} from '../types/BulkDeleteComponent.types'
-import {CompatibleButton, CompatibleDialog, CompatibleFlex} from './uiCompat'
 
 /**
  * Confirmation dialog for deleting documents.
@@ -17,13 +16,17 @@ export function ConfirmDeleteDialog({
 }: ConfirmDeleteDialogProps) {
   if (!show) return null
   return (
-    <CompatibleDialog
+    <Dialog
+      id="confirm-delete-dialog"
+      header="Confirm Deletion"
       onClose={onCancel}
+      width={1}
+      zOffset={1000}
       footer={
-        <CompatibleFlex justify="flex-end" gap={2}>
-          <CompatibleButton text="Cancel" mode="bleed" onClick={onCancel} />
-          <CompatibleButton text="Delete" tone="critical" loading={loading} onClick={onDelete} />
-        </CompatibleFlex>
+        <Flex justify="flex-end" gap={2}>
+          <Button text="Cancel" mode="bleed" onClick={onCancel} />
+          <Button text="Delete" tone="critical" loading={loading} onClick={onDelete} />
+        </Flex>
       }
     >
       <Box padding={4}>
@@ -31,6 +34,6 @@ export function ConfirmDeleteDialog({
           Are you sure you want to delete {count} document{count > 1 ? 's' : ''}? This action cannot be undone.
         </Text>
       </Box>
-    </CompatibleDialog>
+    </Dialog>
   )
 }

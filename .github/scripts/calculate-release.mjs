@@ -117,12 +117,63 @@ function pendingStageTags() {
   })
 }
 
-function commitsAfter(sha, targetSha) {
-  const raw = git(['log', '--format=%B%x00', `${sha}..${targetSha}`])
+function commitRecordsAfter(sha, targetSha) {
+  const raw = git(['log', '--reverse', '--format=%H%x00%P%x00%B%x1e', `${sha}..${targetSha}`])
+  if (!raw) return []
   return raw
-    .split('\0')
-    .map((commit) => commit.trim())
-    .filter(Boolean)
+    .split('\x1e')
+    .filter((record) => record.trim())
+    .map((record) => {
+      const [commitSha, parents = '', ...message] = record.split('\0')
+      return {
+        sha: commitSha.trim(),
+        parents: parents.trim().split(/\s+/).filter(Boolean),
+        message: message.join('\0').trim(),
+      }
+    })
+}
+
+function introducedByMerge(mergeSha) {
+  const [firstParent] = git(['rev-list', '--parents', '-n', '1', mergeSha]).split(/\s+/).slice(1)
+  if (!firstParent) return new Set([mergeSha])
+  return new Set(
+    git(['rev-list', mergeSha, `^${firstParent}`])
+      .split(/\s+/)
+      .filter(Boolean),
+  )
+}
+
+function releaseMessagesWithReverts(records, getIntroducedCommits = introducedByMerge) {
+  const inRange = new Map(records.map((record) => [record.sha, record]))
+  const suppressed = new Set()
+  const replacements = new Map()
+
+  for (const record of records) {
+    const revertedSha = /^This reverts commit ([0-9a-f]{7,40})\.?/im.exec(record.message)?.[1]
+    if (!revertedSha) continue
+
+    const target = [...inRange.keys()].find((sha) => sha.startsWith(revertedSha))
+    if (!target) {
+      // A rollback of code that is already represented by npm latest still needs a patch release.
+      replacements.set(record.sha, `fix: ${record.message}`)
+      continue
+    }
+
+    suppressed.add(record.sha)
+    const reverted = inRange.get(target)
+    if (reverted.parents.length > 1) {
+      const introduced = getIntroducedCommits(target)
+      for (const sha of introduced) {
+        if (inRange.has(sha)) suppressed.add(sha)
+      }
+    } else {
+      suppressed.add(target)
+    }
+  }
+
+  return records
+    .filter(({sha}) => !suppressed.has(sha))
+    .map(({sha, message}) => replacements.get(sha) ?? message)
 }
 
 function exactRegistryVersions(parsed) {
@@ -194,7 +245,9 @@ export function planReleaseForTarget({
   registryVersions,
   pendingStages = [],
   isAncestor: ancestorCheck,
-  getCommits = commitsAfter,
+  getCommits,
+  getCommitRecords,
+  getIntroducedCommits,
 }) {
   if (pendingStages.length > 0) {
     return {
@@ -212,7 +265,21 @@ export function planReleaseForTarget({
   }
 
   const baseline = chooseBaseline({tags, npm, targetSha, isAncestor: ancestorCheck})
-  const commits = getCommits(baseline.sha, targetSha)
+  let records
+  if (getCommitRecords) {
+    records = getCommitRecords(baseline.sha, targetSha)
+  } else if (getCommits) {
+    records = getCommits(baseline.sha, targetSha).map((message) => ({
+      sha: '',
+      parents: [],
+      message,
+    }))
+  } else {
+    records = commitRecordsAfter(baseline.sha, targetSha)
+  }
+  const commits = records.some(({sha}) => sha)
+    ? releaseMessagesWithReverts(records, getIntroducedCommits)
+    : records.map(({message}) => message)
   const plan = planRelease({
     tags,
     npm,

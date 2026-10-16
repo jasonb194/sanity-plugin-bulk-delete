@@ -1,7 +1,6 @@
 import React from 'react'
-import {Text} from '@sanity/ui'
+import {Flex, Text, Box, Select, Button} from '@sanity/ui'
 import type {DocumentTypeSelectProps} from '../types/BulkDeleteComponent.types'
-import {CompatibleBox, CompatibleButton, CompatibleFlex, CompatibleSelect} from './uiCompat'
 
 /**
  * Dropdown for selecting a document type.
@@ -15,12 +14,12 @@ export function DocumentTypeSelect({
   forceRender,
 }: DocumentTypeSelectProps) {
   return (
-    <CompatibleFlex align="center" gap={2}>
+    <Flex align="center" gap={2}>
       <Text>Document Type:</Text>
-      <CompatibleBox flex={1}>
-        <CompatibleSelect
+      <Box flex={1}>
+        <Select
           value={selectedType}
-          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedType(e.currentTarget.value)}
+          onChange={e => setSelectedType(e.currentTarget.value)}
           style={{minWidth: 180}}
           fontSize={2}
         >
@@ -30,18 +29,19 @@ export function DocumentTypeSelect({
               {type.title}
             </option>
           ))}
-        </CompatibleSelect>
-      </CompatibleBox>
-      <CompatibleButton
-        text="↻"
+        </Select>
+      </Box>
+      <Button
         mode="ghost"
         tone="primary"
         padding={2}
+        style={{minWidth: 0}}
         onClick={forceRender}
         disabled={!selectedType}
         title="Force re-render"
-        style={{minWidth: 0}}
-      />
-    </CompatibleFlex>
+      >
+        &#x21bb;
+      </Button>
+    </Flex>
   )
 }

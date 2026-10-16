@@ -1,7 +1,6 @@
 import React from 'react'
-import {Text} from '@sanity/ui'
+import {Card, Stack, Text} from '@sanity/ui'
 import type {PermissionNoticeProps} from '../types/BulkDeleteComponent.types'
-import {CompatibleCard, CompatibleStack} from './uiCompat'
 
 /**
  * Displays a message if the user does not have permission to use the tool.
@@ -10,13 +9,8 @@ import {CompatibleCard, CompatibleStack} from './uiCompat'
  */
 export function PermissionNotice({roles}: PermissionNoticeProps) {
   return (
-    <CompatibleCard
-      padding={4}
-      radius={3}
-      shadow={1}
-      style={{maxWidth: 500, margin: '2rem auto'}}
-    >
-      <CompatibleStack style={{gap: 16}}>
+    <Card padding={4} radius={3} shadow={1} style={{maxWidth: 500, margin: '2rem auto'}}>
+      <Stack style={{gap: 16}}>
         <Text size={2} weight="semibold">
           Tool can only be used by the following roles:{' '}
           {roles
@@ -28,7 +22,7 @@ export function PermissionNotice({roles}: PermissionNoticeProps) {
             )
             .join(', ')}
         </Text>
-      </CompatibleStack>
-    </CompatibleCard>
+      </Stack>
+    </Card>
   )
 }

@@ -61,7 +61,6 @@ vi.mock('@sanity/ui', () => {
   return {
     Button,
     Card: PassThrough,
-    Dialog: PassThrough,
     Flex: PassThrough,
     Spinner: PassThrough,
     Stack: PassThrough,

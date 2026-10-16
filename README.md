@@ -15,8 +15,6 @@ The plugin supports Sanity `^3.76.0 || ^4 || ^5 || ^6`. Sanity's host requiremen
 
 These are Sanity Studio host requirements, not a claim that every supported version has been individually tested with this plugin. See Sanity's [known package compatibility](https://www.sanity.io/docs/help/upgrade-packages), [v3 to v4 upgrade guide](https://www.sanity.io/docs/help/v3-to-v4), and [React 19 requirements](https://www.sanity.io/docs/help/react-19).
 
-The plugin also supports the exact `@sanity/ui@5.0.0-alpha.14` release with React and React DOM `^19.2.8`. This is an experimental UI package prerelease and is tested as an explicit override; it does not mean that Sanity v6 requires UI 5 or that later UI 5 prereleases are supported.
-
 ## Features
 
 - Select a document type and view all documents of that type

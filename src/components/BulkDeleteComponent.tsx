@@ -1,6 +1,6 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react'
 import { useCurrentUser, useClient, usePerspective } from 'sanity'
-import { Text } from '@sanity/ui'
+import { Button, Card, Flex, Spinner, Stack, Text } from '@sanity/ui'
 import { defineQuery } from 'groq'
 import type { BulkDeleteToolOptions } from '../types/BulkDeleteComponent.types'
 import { PermissionNotice } from './PermissionNotice'
@@ -8,13 +8,6 @@ import { DocumentTypeSelect } from './DocumentTypeSelect'
 import { DocumentList } from './DocumentList'
 import { ConfirmDeleteDialog } from './ConfirmDeleteDialog'
 import {getPerspectiveFilter} from '../utils/perspective'
-import {
-  CompatibleButton,
-  CompatibleCard,
-  CompatibleFlex,
-  CompatibleStack,
-  CompatibleSpinner,
-} from './uiCompat'
 
 type FeedbackMessage = {
   status: 'success' | 'error'
@@ -429,13 +422,13 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   }
 
   return (
-    <CompatibleCard padding={4} radius={3} shadow={1} style={{ maxWidth: 500, margin: '2rem auto' }}>
-      <CompatibleStack style={{gap: 16}}>
+    <Card padding={4} radius={3} shadow={1} style={{ maxWidth: 500, margin: '2rem auto' }}>
+      <Stack style={{gap: 16}}>
         <Text size={2} weight="semibold">
           Bulk Delete Documents
         </Text>
         {visibleFeedback && (
-          <CompatibleCard
+          <Card
             padding={3}
             tone={visibleFeedback.status === 'error' ? 'critical' : 'positive'}
             role={visibleFeedback.status === 'error' ? 'alert' : 'status'}
@@ -444,12 +437,12 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
               {visibleFeedback.title}
               {visibleFeedback.description ? `: ${visibleFeedback.description}` : ''}
             </Text>
-          </CompatibleCard>
+          </Card>
         )}
         {visibleRefreshWarning && (
-          <CompatibleCard padding={3} tone="caution" role="alert">
+          <Card padding={3} tone="caution" role="alert">
             <Text>{visibleRefreshWarning}</Text>
-          </CompatibleCard>
+          </Card>
         )}
         <DocumentTypeSelect
           docTypes={docTypes}
@@ -458,14 +451,14 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
           forceRender={() => forceRender(n => n + 1)}
         />
         {loading && (
-          <CompatibleFlex align="center" gap={2}>
-            <CompatibleSpinner muted />
+          <Flex align="center" gap={2}>
+            <Spinner muted />
             <Text>Loading...</Text>
-          </CompatibleFlex>
+          </Flex>
         )}
         {selectedType && !loading && (
           <>
-            <CompatibleButton
+            <Button
               mode="bleed"
               tone="primary"
               onClick={handleSelectAll}
@@ -484,7 +477,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
               isDocSelected={isDocSelected}
               handleSelectDoc={handleSelectDoc}
             />
-            <CompatibleButton
+            <Button
               tone="critical"
               disabled={selectedDocs.size === 0 || loading}
               onClick={() => setConfirmScope(selectionScope)}
@@ -499,7 +492,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
             />
           </>
         )}
-      </CompatibleStack>
-    </CompatibleCard>
+      </Stack>
+    </Card>
   )
 }

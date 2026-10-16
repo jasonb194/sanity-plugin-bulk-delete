@@ -1,19 +1,6 @@
 import React from 'react'
-import {Text} from '@sanity/ui'
+import {Box, Stack, Flex, Checkbox, Text} from '@sanity/ui'
 import type {DocumentListProps} from '../types/BulkDeleteComponent.types'
-import {CompatibleBox, CompatibleCheckbox, CompatibleFlex, CompatibleStack} from './uiCompat'
-
-const visuallyHiddenLabel: React.CSSProperties = {
-  position: 'absolute',
-  width: 1,
-  height: 1,
-  padding: 0,
-  margin: -1,
-  overflow: 'hidden',
-  clip: 'rect(0, 0, 0, 0)',
-  whiteSpace: 'nowrap',
-  border: 0,
-}
 
 /**
  * List of documents with checkboxes for selection.
@@ -27,16 +14,11 @@ export function DocumentList({
   handleSelectDoc,
 }: DocumentListProps) {
   return (
-    <CompatibleBox style={{maxHeight: 300, overflowY: 'auto'}}>
-      <CompatibleStack style={{gap: 8}}>
+    <Box style={{maxHeight: 300, overflowY: 'auto'}}>
+      <Stack style={{gap: 8}}>
         {documentsData.map(doc => (
-          <CompatibleFlex key={doc._id} align="center" gap={2}>
-            <CompatibleCheckbox
-              label={<span style={visuallyHiddenLabel}>{doc.title || doc.name || doc._id}</span>}
-              aria-label={`Select ${doc.title || doc.name || doc._id}`}
-              checked={isDocSelected(doc)}
-              onChange={() => handleSelectDoc(doc._id)}
-            />
+          <Flex key={doc._id} align="center" gap={2}>
+            <Checkbox checked={isDocSelected(doc)} onChange={() => handleSelectDoc(doc._id)} />
             <Text
               style={{
                 color: doc._id.includes('draft')
@@ -62,33 +44,24 @@ export function DocumentList({
                 </Text>
               )}
             </Text>
-          </CompatibleFlex>
+          </Flex>
         ))}
         {stronglyReferencedDocs.length > 0 && (
           <>
-            <CompatibleBox marginTop={3} marginBottom={1}>
+            <Box marginTop={3} marginBottom={1}>
               <Text size={1} weight="semibold" muted>
                 Documents with strong references (cannot delete):
               </Text>
-            </CompatibleBox>
+            </Box>
             {stronglyReferencedDocs.map(doc => (
-              <CompatibleFlex key={doc._id} align="center" gap={2} style={{opacity: 0.5}}>
-                <CompatibleCheckbox
-                  label={
-                    <span style={visuallyHiddenLabel}>
-                      Cannot select {doc.title || doc.name || doc._id}
-                    </span>
-                  }
-                  aria-label={`Cannot select ${doc.title || doc.name || doc._id}`}
-                  checked={false}
-                  disabled
-                />
+              <Flex key={doc._id} align="center" gap={2} style={{opacity: 0.5}}>
+                <Checkbox checked={false} disabled />
                 <Text>{doc.title || doc.name || doc._id}</Text>
-              </CompatibleFlex>
+              </Flex>
             ))}
           </>
         )}
-      </CompatibleStack>
-    </CompatibleBox>
+      </Stack>
+    </Box>
   )
 }

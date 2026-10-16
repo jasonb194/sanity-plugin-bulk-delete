@@ -217,3 +217,74 @@ describe('release baseline and retry planning', () => {
     ).toThrow(expectedError)
   })
 })
+
+describe('revert-aware release planning', () => {
+  const featureSha = 'c'.repeat(40)
+  const mergeSha = 'd'.repeat(40)
+  const revertSha = 'e'.repeat(40)
+  const fixSha = 'f'.repeat(40)
+  const revertedMergeRecords = [
+    {sha: featureSha, parents: [npmSha], message: 'feat(ui): support UI 5'},
+    {
+      sha: mergeSha,
+      parents: [npmSha, featureSha],
+      message: 'Merge pull request #6 from feature/ui-5',
+    },
+    {
+      sha: revertSha,
+      parents: [mergeSha],
+      message: `Revert "Merge pull request #6 from feature/ui-5"\n\nThis reverts commit ${mergeSha}.`,
+    },
+  ]
+
+  function plan(records, options = {}) {
+    return planReleaseForTarget({
+      tags: [],
+      npm: {version: '1.1.2', gitHead: npmSha},
+      targetSha,
+      registryVersions: new Set(['1.1.2']),
+      isAncestor,
+      getCommitRecords: () => records,
+      getIntroducedCommits: () => new Set([featureSha, mergeSha]),
+      ...options,
+    }).plan
+  }
+
+  it('does not release when a feature merge is reverted', () => {
+    expect(plan(revertedMergeRecords)).toMatchObject({shouldPublish: false, version: ''})
+  })
+
+  it('keeps an unrelated fix after a reverted feature merge', () => {
+    expect(
+      plan([
+        ...revertedMergeRecords,
+        {sha: fixSha, parents: [revertSha], message: 'fix: handle empty list'},
+      ]),
+    ).toMatchObject({shouldPublish: true, version: '1.1.3'})
+  })
+
+  it('treats a revert of an already released commit as a patch', () => {
+    const outOfRangeRevert = {
+      sha: revertSha,
+      parents: [npmSha],
+      message: `Revert "feat: released feature"\n\nThis reverts commit ${'9'.repeat(40)}.`,
+    }
+    expect(plan([outOfRangeRevert])).toMatchObject({shouldPublish: true, version: '1.1.3'})
+  })
+
+  it('does not release when an in-range conventional commit is reverted', () => {
+    const feature = {sha: featureSha, parents: [npmSha], message: 'feat: add filtering'}
+    const revert = {
+      sha: revertSha,
+      parents: [featureSha],
+      message: `Revert "feat: add filtering"\n\nThis reverts commit ${featureSha}.`,
+    }
+    expect(plan([feature, revert])).toMatchObject({shouldPublish: false, version: ''})
+  })
+
+  it('keeps an unreverted feature release-worthy', () => {
+    expect(
+      plan([{sha: featureSha, parents: [npmSha], message: 'feat: add filtering'}]),
+    ).toMatchObject({shouldPublish: true, version: '1.2.0'})
+  })
+})
