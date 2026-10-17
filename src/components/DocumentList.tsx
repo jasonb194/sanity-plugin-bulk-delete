@@ -152,7 +152,7 @@ function StrongReferenceDetails({targetId, label}: {targetId: string; label: str
       <Box id={referencesId} hidden={!expanded}>
         {expanded && (
           <Card padding={3} radius={2} tone="transparent">
-            <Stack gap={3}>
+            <Stack style={{gap: 12}}>
               {loading && (
                 <Flex align="center" gap={2}>
                   <Spinner muted />
@@ -174,7 +174,7 @@ function StrongReferenceDetails({targetId, label}: {targetId: string; label: str
                     {total > listedCount ? ` Showing the first ${listedCount} in ID order.` : ''}
                   </Text>
                   {documents.length > 0 ? (
-                    <Stack gap={2}>
+                    <Stack style={{gap: 8}}>
                       {documents.map((referrer) => (
                         <Text key={`${referrer._type}:${referrer._id}`} size={1}>
                           <IntentLink
