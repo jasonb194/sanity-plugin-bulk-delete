@@ -68,13 +68,14 @@ vi.mock('@sanity/ui', () => {
 })
 
 const blockedDoc = {_id: 'blocked-1', _type: 'article', title: 'Blocked article'}
+const isDocSelected = () => false
 
 function renderList() {
   return render(
     <DocumentList
       documentsData={[]}
       stronglyReferencedDocs={[blockedDoc]}
-      isDocSelected={() => false}
+      isDocSelected={isDocSelected}
       handleSelectDoc={vi.fn()}
     />,
   )
