@@ -99,8 +99,41 @@ describe('DocumentList strong reference details', () => {
   it('hides reference controls outside the published perspective', () => {
     renderList()
 
-    expect(screen.queryByRole('button', {name: 'Show references'})).toBeNull()
+    expect(screen.queryByRole('button', {name: /references for Blocked article/})).toBeNull()
     expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+
+  it('shows an accessible caret beside the blocked document and toggles its details', async () => {
+    mocks.perspective = 'published'
+    mocks.fetch.mockResolvedValue({total: 0, documents: []})
+    renderList()
+
+    const showButton = screen.getByRole('button', {name: 'Show references for Blocked article'})
+    expect(showButton.textContent).toBe('▸')
+    expect(showButton.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('Show references')).toBeNull()
+    expect(showButton.parentElement?.parentElement?.textContent).toContain('Blocked article')
+
+    const referencesId = showButton.getAttribute('aria-controls')
+    expect(referencesId).toBeTruthy()
+    fireEvent.click(showButton)
+
+    const hideButton = screen.getByRole('button', {name: 'Hide references for Blocked article'})
+    expect(hideButton.textContent).toBe('▾')
+    expect(hideButton.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(referencesId!)?.hasAttribute('hidden')).toBe(false)
+    await screen.findByText('0 documents reference this document.')
+
+    fireEvent.click(hideButton)
+    const collapsedButton = screen.getByRole('button', {
+      name: 'Show references for Blocked article',
+    })
+    expect(collapsedButton.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById(referencesId!)?.hasAttribute('hidden')).toBe(true)
+
+    fireEvent.click(collapsedButton)
+    expect(await screen.findByText('0 documents reference this document.')).toBeTruthy()
+    expect(mocks.fetch).toHaveBeenCalledOnce()
   })
 
   it('loads the count and first page together, then renders referrers as edit intent links', async () => {
@@ -114,7 +147,7 @@ describe('DocumentList strong reference details', () => {
     })
     renderList()
 
-    fireEvent.click(screen.getByRole('button', {name: 'Show references'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Show references for Blocked article'}))
 
     await screen.findByRole('link', {name: 'Referenced A'})
     expect(screen.getByText('2 documents reference this document.')).toBeTruthy()
@@ -144,7 +177,7 @@ describe('DocumentList strong reference details', () => {
     )
     renderList()
 
-    fireEvent.click(screen.getByRole('button', {name: 'Show references'}))
+    fireEvent.click(screen.getByRole('button', {name: 'Show references for Blocked article'}))
 
     await screen.findByRole('link', {name: 'Referrer 1'})
     expect(screen.getByText(/105 documents reference this document/)).toBeTruthy()

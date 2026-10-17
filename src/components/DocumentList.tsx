@@ -1,6 +1,6 @@
 import {Box, Button, Card, Checkbox, Flex, Spinner, Stack, Text} from '@sanity/ui'
 import {defineQuery} from 'groq'
-import React, {useCallback, useRef, useState} from 'react'
+import React, {useCallback, useId, useRef, useState} from 'react'
 import {useClient, usePerspective} from 'sanity'
 import {IntentLink} from 'sanity/router'
 
@@ -27,8 +27,9 @@ function getDocumentLabel(document: ReferringDocument): string {
   return document._id
 }
 
-function StrongReferenceDetails({targetId}: {targetId: string}) {
+function StrongReferenceDetails({targetId, label}: {targetId: string; label: string}) {
   const client = useClient({apiVersion: '2025-05-29'})
+  const referencesId = useId()
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
@@ -133,74 +134,88 @@ function StrongReferenceDetails({targetId}: {targetId: string}) {
 
   return (
     <Box>
-      <Button
-        mode="bleed"
-        text={expanded ? 'Hide references' : 'Show references'}
-        aria-expanded={expanded}
-        onClick={toggleExpanded}
-      />
-      {expanded && (
-        <Card padding={3} radius={2} tone="transparent">
-          <Stack gap={3}>
-            {loading && (
-              <Flex align="center" gap={2}>
-                <Spinner muted />
-                <Text size={1}>Loading references…</Text>
-              </Flex>
-            )}
-            {error && (
-              <Flex align="center" gap={2}>
-                <Card padding={2} tone="critical" role="alert">
-                  <Text size={1}>Couldn’t load references: {error}</Text>
-                </Card>
-                <Button mode="bleed" text="Retry" onClick={retryLoadPage} />
-              </Flex>
-            )}
-            {total !== undefined && !error && (
-              <>
-                <Text size={1} muted>
-                  {total} document{total === 1 ? '' : 's'} reference this document.
-                  {total > listedCount ? ` Showing the first ${listedCount} in ID order.` : ''}
-                </Text>
-                {documents.length > 0 ? (
-                  <Stack gap={2}>
-                    {documents.map((referrer) => (
-                      <Text key={`${referrer._type}:${referrer._id}`} size={1}>
-                        <IntentLink intent="edit" params={{id: referrer._id, type: referrer._type}}>
-                          {getDocumentLabel(referrer)}
-                        </IntentLink>
-                      </Text>
-                    ))}
-                  </Stack>
-                ) : (
+      <Flex align="center" gap={1}>
+        <Checkbox checked={false} disabled />
+        <Text>{label}</Text>
+        <Button
+          mode="bleed"
+          aria-label={`${expanded ? 'Hide' : 'Show'} references for ${label}`}
+          aria-expanded={expanded}
+          aria-controls={referencesId}
+          onClick={toggleExpanded}
+        >
+          <Text as="span" aria-hidden="true">
+            {expanded ? '▾' : '▸'}
+          </Text>
+        </Button>
+      </Flex>
+      <Box id={referencesId} hidden={!expanded}>
+        {expanded && (
+          <Card padding={3} radius={2} tone="transparent">
+            <Stack gap={3}>
+              {loading && (
+                <Flex align="center" gap={2}>
+                  <Spinner muted />
+                  <Text size={1}>Loading references…</Text>
+                </Flex>
+              )}
+              {error && (
+                <Flex align="center" gap={2}>
+                  <Card padding={2} tone="critical" role="alert">
+                    <Text size={1}>Couldn’t load references: {error}</Text>
+                  </Card>
+                  <Button mode="bleed" text="Retry" onClick={retryLoadPage} />
+                </Flex>
+              )}
+              {total !== undefined && !error && (
+                <>
                   <Text size={1} muted>
-                    No referencing documents found.
+                    {total} document{total === 1 ? '' : 's'} reference this document.
+                    {total > listedCount ? ` Showing the first ${listedCount} in ID order.` : ''}
                   </Text>
-                )}
-                {pageCount > 1 && (
-                  <Flex align="center" gap={2}>
-                    <Button
-                      mode="bleed"
-                      text="Previous"
-                      disabled={page <= 1 || loading}
-                      onClick={loadPreviousPage}
-                    />
-                    <Text size={1}>
-                      Page {page} of {pageCount}
+                  {documents.length > 0 ? (
+                    <Stack gap={2}>
+                      {documents.map((referrer) => (
+                        <Text key={`${referrer._type}:${referrer._id}`} size={1}>
+                          <IntentLink
+                            intent="edit"
+                            params={{id: referrer._id, type: referrer._type}}
+                          >
+                            {getDocumentLabel(referrer)}
+                          </IntentLink>
+                        </Text>
+                      ))}
+                    </Stack>
+                  ) : (
+                    <Text size={1} muted>
+                      No referencing documents found.
                     </Text>
-                    <Button
-                      mode="bleed"
-                      text="Next"
-                      disabled={page >= pageCount || loading}
-                      onClick={loadNextPage}
-                    />
-                  </Flex>
-                )}
-              </>
-            )}
-          </Stack>
-        </Card>
-      )}
+                  )}
+                  {pageCount > 1 && (
+                    <Flex align="center" gap={2}>
+                      <Button
+                        mode="bleed"
+                        text="Previous"
+                        disabled={page <= 1 || loading}
+                        onClick={loadPreviousPage}
+                      />
+                      <Text size={1}>
+                        Page {page} of {pageCount}
+                      </Text>
+                      <Button
+                        mode="bleed"
+                        text="Next"
+                        disabled={page >= pageCount || loading}
+                        onClick={loadNextPage}
+                      />
+                    </Flex>
+                  )}
+                </>
+              )}
+            </Stack>
+          </Card>
+        )}
+      </Box>
     </Box>
   )
 }
@@ -257,15 +272,22 @@ export function DocumentList({
                 Documents with strong references (cannot delete):
               </Text>
             </Box>
-            {stronglyReferencedDocs.map(doc => (
-              <Box key={doc._id}>
-                <Flex align="center" gap={2}>
-                  <Checkbox checked={false} disabled />
-                  <Text>{doc.title || doc.name || doc._id}</Text>
-                </Flex>
-                {showReferenceDetails && <StrongReferenceDetails targetId={doc._id} />}
-              </Box>
-            ))}
+            {stronglyReferencedDocs.map(doc =>
+              showReferenceDetails ? (
+                <StrongReferenceDetails
+                  key={doc._id}
+                  targetId={doc._id}
+                  label={String(doc.title || doc.name || doc._id)}
+                />
+              ) : (
+                <Box key={doc._id}>
+                  <Flex align="center" gap={2}>
+                    <Checkbox checked={false} disabled />
+                    <Text>{doc.title || doc.name || doc._id}</Text>
+                  </Flex>
+                </Box>
+              ),
+            )}
           </>
         )}
       </Stack>
