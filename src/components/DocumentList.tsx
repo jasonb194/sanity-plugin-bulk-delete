@@ -1,40 +1,36 @@
 import {Box, Button, Card, Checkbox, Flex, Spinner, Stack, Text} from '@sanity/ui'
-import {defineQuery} from 'groq'
 import React, {useCallback, useId, useRef, useState} from 'react'
-import {useClient, usePerspective} from 'sanity'
 import {IntentLink} from 'sanity/router'
 
-import type {DocumentListProps} from '../types/BulkDeleteComponent.types'
+import type {
+  DocumentListProps,
+  StrongReferencePageResult,
+} from '../types/BulkDeleteComponent.types'
 
 const REFERENCES_PER_PAGE = 10
 const MAX_REFERENCE_PAGES = 10
 
-type ReferringDocument = {
-  _id: string
-  _type: string
-  title?: unknown
-  name?: unknown
-}
-
-type ReferencePageResult = {
-  total: number
-  documents: ReferringDocument[]
-}
-
-function getDocumentLabel(document: ReferringDocument): string {
+function getDocumentLabel(document: StrongReferencePageResult['documents'][number]): string {
   if (typeof document.title === 'string' && document.title.trim()) return document.title
   if (typeof document.name === 'string' && document.name.trim()) return document.name
   return document._id
 }
 
-function StrongReferenceDetails({targetId, label}: {targetId: string; label: string}) {
-  const client = useClient({apiVersion: '2025-05-29'})
+function StrongReferenceDetails({
+  targetId,
+  label,
+  loadStrongReferences,
+}: {
+  targetId: string
+  label: string
+  loadStrongReferences: DocumentListProps['loadStrongReferences']
+}) {
   const referencesId = useId()
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
   const [total, setTotal] = useState<number>()
-  const [documents, setDocuments] = useState<ReferringDocument[]>([])
+  const [documents, setDocuments] = useState<StrongReferencePageResult['documents']>([])
   const [page, setPage] = useState(1)
   const requestId = useRef(0)
 
@@ -44,25 +40,19 @@ function StrongReferenceDetails({targetId, label}: {targetId: string; label: str
       setLoading(true)
       setError(undefined)
       try {
-        const pageQuery = defineQuery(
-          '{"total": count(*[references($targetId)]), "documents": *[references($targetId)] | order(_id asc) [$start...$end]{_id, _type, title, name}}',
-        )
         const fetchResult = (requestedPage: number) =>
-          client.fetch<ReferencePageResult>(
-            pageQuery,
-            {
-              targetId,
-              start: (requestedPage - 1) * REFERENCES_PER_PAGE,
-              end: requestedPage * REFERENCES_PER_PAGE,
-            },
-            {perspective: 'raw'},
-          )
+          loadStrongReferences({
+            targetId,
+            start: (requestedPage - 1) * REFERENCES_PER_PAGE,
+            end: requestedPage * REFERENCES_PER_PAGE,
+          })
         let boundedPage = nextPage
-        let result: ReferencePageResult | undefined
+        let result: StrongReferencePageResult | null | undefined
         let pageWasLoaded = false
         for (let attempt = 0; attempt < 3; attempt += 1) {
           result = await fetchResult(boundedPage)
           if (id !== requestId.current) return
+          if (!result) return
           const pageCount = Math.min(
             Math.ceil(result.total / REFERENCES_PER_PAGE),
             MAX_REFERENCE_PAGES,
@@ -102,7 +92,7 @@ function StrongReferenceDetails({targetId, label}: {targetId: string; label: str
         if (id === requestId.current) setLoading(false)
       }
     },
-    [client, targetId],
+    [loadStrongReferences, targetId],
   )
 
   const handleLoadPage = useCallback(
@@ -227,11 +217,12 @@ function StrongReferenceDetails({targetId, label}: {targetId: string; label: str
 export function DocumentList({
   documentsData,
   stronglyReferencedDocs,
+  showReferenceDetails,
+  referenceScopeKey,
+  loadStrongReferences,
   isDocSelected,
   handleSelectDoc,
 }: DocumentListProps) {
-  const perspective = usePerspective()
-  const showReferenceDetails = perspective.selectedPerspectiveName === 'published'
   return (
     <Box style={{maxHeight: 300, overflowY: 'auto'}}>
       <Stack style={{gap: 8}}>
@@ -275,9 +266,10 @@ export function DocumentList({
             {stronglyReferencedDocs.map(doc =>
               showReferenceDetails ? (
                 <StrongReferenceDetails
-                  key={doc._id}
+                  key={`${referenceScopeKey}:${doc._id}`}
                   targetId={doc._id}
                   label={String(doc.title || doc.name || doc._id)}
+                  loadStrongReferences={loadStrongReferences}
                 />
               ) : (
                 <Box key={doc._id}>

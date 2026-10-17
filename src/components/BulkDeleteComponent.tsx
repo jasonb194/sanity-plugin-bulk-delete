@@ -2,7 +2,11 @@ import React, {useCallback, useEffect, useRef, useState} from 'react'
 import { useCurrentUser, useClient, usePerspective } from 'sanity'
 import { Button, Card, Flex, Spinner, Stack, Text } from '@sanity/ui'
 import { defineQuery } from 'groq'
-import type { BulkDeleteToolOptions } from '../types/BulkDeleteComponent.types'
+import type {
+  BulkDeleteToolOptions,
+  StrongReferencePageRequest,
+  StrongReferencePageResult,
+} from '../types/BulkDeleteComponent.types'
 import { PermissionNotice } from './PermissionNotice'
 import { DocumentTypeSelect } from './DocumentTypeSelect'
 import { DocumentList } from './DocumentList'
@@ -82,6 +86,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   // selectedPerspective can be an object for releases in newer Studio versions.
   // selectedPerspectiveName is the stable name field shared by Studio v3-v6.
   const perspectiveMatch = getPerspectiveFilter(perspective.selectedPerspectiveName)
+  const showReferenceDetails = perspective.selectedPerspectiveName === 'published'
   const clientConfig = sanityClient.config()
   const roleNames = currentUser?.roles?.map((role: any) => role.name).sort() ?? []
   const allowedRoles = [...(config.roles ?? [])].sort()
@@ -161,6 +166,28 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
       return sanityClient.fetch(query, {type}, { perspective: 'raw' })
     },
     [perspectiveMatch, sanityClient],
+  )
+
+  // Reference details belong to the same authorization and selection scope as
+  // the document list. Ignore results when that scope changes during a request.
+  const loadStrongReferences = useCallback(
+    async ({targetId, start, end}: StrongReferencePageRequest) => {
+      const requestScope = selectionScope
+      if (latestScope.current !== requestScope || !latestIsAdmin.current) return null
+
+      const query = defineQuery(
+        '{"total": count(*[references($targetId)]), "documents": *[references($targetId)] | order(_id asc) [$start...$end]{_id, _type, title, name}}',
+      )
+      const result = await sanityClient.fetch<StrongReferencePageResult>(
+        query,
+        {targetId, start, end},
+        {perspective: 'raw'},
+      )
+
+      if (latestScope.current !== requestScope || !latestIsAdmin.current) return null
+      return result
+    },
+    [sanityClient, selectionScope],
   )
 
   // Fetch all unique document types from the dataset
@@ -474,6 +501,9 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
             <DocumentList
               documentsData={documentsData}
               stronglyReferencedDocs={stronglyReferencedDocs}
+              showReferenceDetails={showReferenceDetails}
+              referenceScopeKey={selectionScope}
+              loadStrongReferences={loadStrongReferences}
               isDocSelected={isDocSelected}
               handleSelectDoc={handleSelectDoc}
             />

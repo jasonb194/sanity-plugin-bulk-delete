@@ -6,13 +6,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 import {DocumentList} from '../src/components/DocumentList'
 
 const mocks = vi.hoisted(() => ({
-  perspective: 'drafts' as string | undefined,
-  fetch: vi.fn(),
-}))
-
-vi.mock('sanity', () => ({
-  useClient: () => ({fetch: mocks.fetch}),
-  usePerspective: () => ({selectedPerspectiveName: mocks.perspective}),
+  loadStrongReferences: vi.fn(),
 }))
 
 vi.mock('sanity/router', () => ({
@@ -35,8 +29,6 @@ vi.mock('sanity/router', () => ({
     </a>
   ),
 }))
-
-vi.mock('groq', () => ({defineQuery: (query: string) => query}))
 
 vi.mock('@sanity/ui', () => {
   const PassThrough = ({children, as, ...props}: {children?: React.ReactNode; as?: string}) =>
@@ -70,11 +62,14 @@ vi.mock('@sanity/ui', () => {
 const blockedDoc = {_id: 'blocked-1', _type: 'article', title: 'Blocked article'}
 const isDocSelected = () => false
 
-function renderList() {
+function renderList(showReferenceDetails = false) {
   return render(
     <DocumentList
       documentsData={[]}
       stronglyReferencedDocs={[blockedDoc]}
+      showReferenceDetails={showReferenceDetails}
+      referenceScopeKey="test-scope"
+      loadStrongReferences={mocks.loadStrongReferences}
       isDocSelected={isDocSelected}
       handleSelectDoc={vi.fn()}
     />,
@@ -91,23 +86,21 @@ function documentsForPage(start: number) {
 
 describe('DocumentList strong reference details', () => {
   beforeEach(() => {
-    mocks.perspective = 'drafts'
-    mocks.fetch.mockReset()
+    mocks.loadStrongReferences.mockReset()
   })
 
   afterEach(() => cleanup())
 
-  it('hides reference controls outside the published perspective', () => {
+  it('hides reference controls when the parent disables reference details', () => {
     renderList()
 
     expect(screen.queryByRole('button', {name: /references for Blocked article/})).toBeNull()
-    expect(mocks.fetch).not.toHaveBeenCalled()
+    expect(mocks.loadStrongReferences).not.toHaveBeenCalled()
   })
 
   it('shows an accessible caret beside the blocked document and toggles its details', async () => {
-    mocks.perspective = 'published'
-    mocks.fetch.mockResolvedValue({total: 0, documents: []})
-    renderList()
+    mocks.loadStrongReferences.mockResolvedValue({total: 0, documents: []})
+    renderList(true)
 
     const showButton = screen.getByRole('button', {name: 'Show references for Blocked article'})
     expect(showButton.textContent).toBe('▸')
@@ -134,19 +127,23 @@ describe('DocumentList strong reference details', () => {
 
     fireEvent.click(collapsedButton)
     expect(await screen.findByText('0 documents reference this document.')).toBeTruthy()
-    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(mocks.loadStrongReferences).toHaveBeenCalledOnce()
+    expect(mocks.loadStrongReferences).toHaveBeenCalledWith({
+      targetId: blockedDoc._id,
+      start: 0,
+      end: 10,
+    })
   })
 
   it('loads the count and first page together, then renders referrers as edit intent links', async () => {
-    mocks.perspective = 'published'
-    mocks.fetch.mockResolvedValue({
+    mocks.loadStrongReferences.mockResolvedValue({
       total: 2,
       documents: [
         {_id: 'ref-a', _type: 'article', title: 'Referenced A'},
         {_id: 'ref-b', _type: 'author', name: 'Referenced B'},
       ],
     })
-    renderList()
+    renderList(true)
 
     fireEvent.click(screen.getByRole('button', {name: 'Show references for Blocked article'}))
 
@@ -163,20 +160,19 @@ describe('DocumentList strong reference details', () => {
       'author',
     )
 
-    expect(mocks.fetch).toHaveBeenCalledOnce()
-    const [query, params, options] = mocks.fetch.mock.calls[0]
-    expect(query).toContain('count(*[references($targetId)])')
-    expect(query).toContain('*[references($targetId)] | order(_id asc) [$start...$end]')
-    expect(params).toEqual({targetId: blockedDoc._id, start: 0, end: 10})
-    expect(options).toEqual({perspective: 'raw'})
+    expect(mocks.loadStrongReferences).toHaveBeenCalledOnce()
+    expect(mocks.loadStrongReferences).toHaveBeenCalledWith({
+      targetId: blockedDoc._id,
+      start: 0,
+      end: 10,
+    })
   })
 
   it('pages by ten and caps navigation at ten pages while showing the true count', async () => {
-    mocks.perspective = 'published'
-    mocks.fetch.mockImplementation((_query: string, params: {start: number}) =>
-      Promise.resolve({total: 105, documents: documentsForPage(params.start)}),
+    mocks.loadStrongReferences.mockImplementation(({start}: {start: number}) =>
+      Promise.resolve({total: 105, documents: documentsForPage(start)}),
     )
-    renderList()
+    renderList(true)
 
     fireEvent.click(screen.getByRole('button', {name: 'Show references for Blocked article'}))
 
@@ -188,18 +184,26 @@ describe('DocumentList strong reference details', () => {
     fireEvent.click(screen.getByRole('button', {name: 'Next'}))
     await screen.findByRole('link', {name: 'Referrer 11'})
     expect(screen.getByText('Page 2 of 10')).toBeTruthy()
-    expect(mocks.fetch.mock.calls[1][1]).toEqual({targetId: blockedDoc._id, start: 10, end: 20})
+    expect(mocks.loadStrongReferences.mock.calls[1][0]).toEqual({
+      targetId: blockedDoc._id,
+      start: 10,
+      end: 20,
+    })
 
     for (let page = 3; page <= 10; page += 1) {
       fireEvent.click(screen.getByRole('button', {name: 'Next'}))
       await waitFor(() => expect(screen.getByText(`Page ${page} of 10`)).toBeTruthy())
     }
 
-    expect(mocks.fetch).toHaveBeenCalledTimes(10)
-    expect(mocks.fetch.mock.calls[9][1]).toEqual({targetId: blockedDoc._id, start: 90, end: 100})
+    expect(mocks.loadStrongReferences).toHaveBeenCalledTimes(10)
+    expect(mocks.loadStrongReferences.mock.calls[9][0]).toEqual({
+      targetId: blockedDoc._id,
+      start: 90,
+      end: 100,
+    })
     expect(screen.getByRole('button', {name: 'Next'}).hasAttribute('disabled')).toBe(true)
     fireEvent.click(screen.getByRole('button', {name: 'Next'}))
-    expect(mocks.fetch).toHaveBeenCalledTimes(10)
+    expect(mocks.loadStrongReferences).toHaveBeenCalledTimes(10)
     expect(screen.queryByText('Page 11 of 10')).toBeNull()
   })
 })

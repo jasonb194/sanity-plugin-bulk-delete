@@ -68,6 +68,28 @@ export interface BulkDeleteDocument {
 }
 
 /**
+ * A page of documents that reference a strongly referenced document.
+ */
+export interface StrongReferencePageResult {
+  total: number
+  documents: Array<{
+    _id: string
+    _type: string
+    title?: unknown
+    name?: unknown
+  }>
+}
+
+/**
+ * Query arguments for loading one page of documents that reference a document.
+ */
+export interface StrongReferencePageRequest {
+  targetId: string
+  start: number
+  end: number
+}
+
+/**
  * Props for the {@link DocumentList} component.
  * Used for rendering the list of documents with selection checkboxes.
  * @public
@@ -81,6 +103,21 @@ export interface DocumentListProps {
    * Array of documents that have strong references and cannot be deleted.
    */
   stronglyReferencedDocs: BulkDeleteDocument[]
+  /**
+   * Whether the current Studio perspective allows showing reference details.
+   */
+  showReferenceDetails: boolean
+  /**
+   * Scope key used to reset per-document reference detail state when context changes.
+   */
+  referenceScopeKey: string
+  /**
+   * Loads one page of referencing documents. Returns `null` when the request's
+   * selection or authorization scope has become stale.
+   */
+  loadStrongReferences: (
+    request: StrongReferencePageRequest,
+  ) => Promise<StrongReferencePageResult | null>
   /**
    * Function to check if a document is currently selected.
    * @param doc - The document object to check.
