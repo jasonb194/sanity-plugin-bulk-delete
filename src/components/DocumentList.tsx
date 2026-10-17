@@ -105,6 +105,7 @@ function StrongReferenceDetails({
     [loadStrongReferences, targetId],
   )
 
+  /** Starts a reference-page request and records any current request failure. */
   const handleLoadPage = useCallback(
     (requestedPage: number) => {
       const pendingRequest = loadPage(requestedPage)
@@ -118,13 +119,17 @@ function StrongReferenceDetails({
     [loadPage],
   )
 
+  /** Expands or collapses the details and loads the first page when needed. */
   const toggleExpanded = useCallback(() => {
     const nextExpanded = !expanded
     setExpanded(nextExpanded)
     if (nextExpanded && total === undefined && !loading) handleLoadPage(1)
   }, [expanded, handleLoadPage, loading, total])
+  /** Retries loading the currently displayed reference page. */
   const retryLoadPage = useCallback(() => handleLoadPage(page), [handleLoadPage, page])
+  /** Loads the page immediately before the currently displayed page. */
   const loadPreviousPage = useCallback(() => handleLoadPage(page - 1), [handleLoadPage, page])
+  /** Loads the page immediately after the currently displayed page. */
   const loadNextPage = useCallback(() => handleLoadPage(page + 1), [handleLoadPage, page])
 
   const pageCount =
