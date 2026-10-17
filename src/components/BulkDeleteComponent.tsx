@@ -41,6 +41,13 @@ const permissionError: FeedbackMessage = {
   description: 'Your permissions or Studio context changed. Select documents again before deleting.',
 }
 
+/**
+ * Checks that every selected document is still eligible for the chosen type.
+ * @param selectedDocs - Documents in the current selection.
+ * @param eligibleDocs - Documents currently returned as deletable.
+ * @param selectedType - Type selected in the document type picker.
+ * @returns Whether the selection still matches the eligible document set.
+ */
 const hasEligibleSelection = (
   selectedDocs: {_id: string; _type: string}[],
   eligibleDocs: {_id: string; _type: string}[],
@@ -168,8 +175,10 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
     [perspectiveMatch, sanityClient],
   )
 
-  // Reference details belong to the same authorization and selection scope as
-  // the document list. Ignore results when that scope changes during a request.
+  /**
+   * Loads one page of referrers only while the current selection and authorization scope is valid.
+   * Returns `null` if the scope is already invalid or changes while the query is in flight.
+   */
   const loadStrongReferences = useCallback(
     async ({targetId, start, end}: StrongReferencePageRequest) => {
       const requestScope = selectionScope

@@ -10,12 +10,21 @@ import type {
 const REFERENCES_PER_PAGE = 10
 const MAX_REFERENCE_PAGES = 10
 
+/**
+ * Picks the most useful display name available for a referencing document.
+ * @param document - Referencing document returned by the Sanity query.
+ * @returns Its title, name, or ID when no title or name is available.
+ */
 function getDocumentLabel(document: StrongReferencePageResult['documents'][number]): string {
   if (typeof document.title === 'string' && document.title.trim()) return document.title
   if (typeof document.name === 'string' && document.name.trim()) return document.name
   return document._id
 }
 
+/**
+ * Renders expandable, paginated referrers for a document that cannot be deleted.
+ * @param props - Target document details and the parent-scoped reference loader.
+ */
 function StrongReferenceDetails({
   targetId,
   label,
@@ -34,6 +43,7 @@ function StrongReferenceDetails({
   const [page, setPage] = useState(1)
   const requestId = useRef(0)
 
+  /** Retries up to three times with a bounded page if the referrer count changed. */
   const loadPage = useCallback(
     async (nextPage: number) => {
       const id = ++requestId.current
