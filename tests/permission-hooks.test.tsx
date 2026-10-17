@@ -10,8 +10,15 @@ const hooks = vi.hoisted(() => ({
   perspective: 'drafts' as string | undefined,
   projectId: 'project-a',
   dataset: 'dataset-a',
+  referenceResults: [] as unknown[],
   client: {
     fetch: vi.fn(async (query: string, params?: {type?: string}) => {
+      if (query.includes('references($targetId)')) {
+        return {
+          total: 17,
+          documents: [{_id: 'referrer-1', _type: 'article', title: 'Referrer one'}],
+        }
+      }
       if (query.includes('array::unique')) return ['article', 'blog']
       const type = params?.type ?? 'article'
       const perspective = query.includes('_id in path("drafts.**")') ? 'drafts' : 'published'
@@ -30,6 +37,7 @@ const hooks = vi.hoisted(() => ({
   },
   eligibleDocs: undefined as {_id: string; _type: string; title: string}[] | undefined,
 }))
+const baselineClientFetch = hooks.client.fetch.getMockImplementation()!
 
 vi.mock('sanity', () => ({
   useCurrentUser: () => hooks.currentUser,
@@ -90,18 +98,72 @@ vi.mock('../src/components/DocumentList', () => ({
   DocumentList: ({
     documentsData,
     handleSelectDoc,
+    showReferenceDetails,
+    loadStrongReferences,
   }: {
     documentsData: {_id: string; _type: string}[]
     handleSelectDoc: (id: string) => void
+    showReferenceDetails: boolean
+    loadStrongReferences: (request: {targetId: string; start: number; end: number}) => Promise<{
+      total: number
+      documents: {_id: string; _type: string; title?: unknown; name?: unknown}[]
+    } | null>
   }) =>
     documentsData.length > 0
-      ? React.createElement(
-          'button',
-          {type: 'button', onClick: () => handleSelectDoc(documentsData[0]._id)},
-          `Select ${documentsData[0]._type}`,
-        )
+      ? React.createElement(DocumentListTestHarness, {
+          documentsData,
+          handleSelectDoc,
+          showReferenceDetails,
+          loadStrongReferences,
+        })
       : null,
 }))
+
+function DocumentListTestHarness({
+  documentsData,
+  handleSelectDoc,
+  showReferenceDetails,
+  loadStrongReferences,
+}: {
+  documentsData: {_id: string; _type: string}[]
+  handleSelectDoc: (id: string) => void
+  showReferenceDetails: boolean
+  loadStrongReferences: (request: {targetId: string; start: number; end: number}) => Promise<{
+    total: number
+    documents: {_id: string; _type: string; title?: unknown; name?: unknown}[]
+  } | null>
+}) {
+  const [result, setResult] = React.useState<number | null>()
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      'button',
+      {type: 'button', onClick: () => handleSelectDoc(documentsData[0]._id)},
+      `Select ${documentsData[0]._type}`,
+    ),
+    showReferenceDetails &&
+      React.createElement(
+        'button',
+        {
+          type: 'button',
+          onClick: async () => {
+            const loaded = await loadStrongReferences({targetId: 'blocked-1', start: 0, end: 10})
+            hooks.referenceResults.push(loaded)
+            setResult(loaded?.total ?? null)
+          },
+        },
+        'Load references',
+      ),
+    result !== undefined &&
+      React.createElement(
+        'div',
+        null,
+        result === null ? 'Reference request discarded' : `Loaded references: ${result}`,
+      ),
+  )
+}
+
 vi.mock('../src/components/ConfirmDeleteDialog', () => ({
   ConfirmDeleteDialog: ({show, onDelete}: {show: boolean; onDelete: () => void}) =>
     show
@@ -115,8 +177,9 @@ describe('BulkDeleteComponent permission hooks', () => {
     hooks.perspective = 'drafts'
     hooks.projectId = 'project-a'
     hooks.dataset = 'dataset-a'
+    hooks.referenceResults = []
     hooks.eligibleDocs = undefined
-    hooks.client.fetch.mockClear()
+    hooks.client.fetch.mockReset().mockImplementation(baselineClientFetch)
     hooks.client.delete.mockClear()
     hooks.client.commit.mockReset().mockResolvedValue(undefined)
     hooks.client.transaction.mockReset().mockImplementation(() => ({
@@ -149,6 +212,83 @@ describe('BulkDeleteComponent permission hooks', () => {
     rerender(<BulkDeleteComponent schemaTypes={[]} />)
     expect(hooks.client.fetch).toHaveBeenCalledTimes(1)
   })
+
+  it('loads reference details in the current scope using a raw perspective query', async () => {
+    hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+    hooks.perspective = 'published'
+    render(<BulkDeleteComponent schemaTypes={[]} />)
+
+    await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+    await waitFor(() => expect(screen.getByRole('button', {name: 'Select article'})).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', {name: 'Load references'}))
+
+    await waitFor(() => expect(screen.getByText('Loaded references: 17')).toBeTruthy())
+    const [query, params, options] = hooks.client.fetch.mock.calls.find(([candidate]) =>
+      candidate.includes('references($targetId)'),
+    )!
+    expect(query).toContain('count(*[references($targetId)])')
+    expect(query).toContain('*[references($targetId)] | order(_id asc) [$start...$end]')
+    expect(params).toEqual({targetId: 'blocked-1', start: 0, end: 10})
+    expect(options).toEqual({perspective: 'raw'})
+  })
+
+  it.each(['user', 'project', 'dataset', 'role', 'perspective'] as const)(
+    'discards a pending reference request after the %s scope changes',
+    async (changedScope) => {
+      hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}
+      hooks.perspective = 'published'
+      let resolveReferences!: (value: {
+        total: number
+        documents: {_id: string; _type: string; title: string}[]
+      }) => void
+      const pendingReferences = new Promise<{
+        total: number
+        documents: {_id: string; _type: string; title: string}[]
+      }>((resolve) => {
+        resolveReferences = resolve
+      })
+      hooks.client.fetch.mockImplementation((query: string, params?: {type?: string}) =>
+        query.includes('references($targetId)')
+          ? pendingReferences
+          : baselineClientFetch(query, params),
+      )
+
+      const {rerender} = render(<BulkDeleteComponent schemaTypes={[]} />)
+      await waitFor(() => expect(hooks.client.fetch).toHaveBeenCalledTimes(1))
+      fireEvent.click(screen.getByRole('button', {name: 'Choose article'}))
+      await waitFor(() =>
+        expect(screen.getByRole('button', {name: 'Load references'})).toBeTruthy(),
+      )
+      fireEvent.click(screen.getByRole('button', {name: 'Load references'}))
+      await waitFor(() =>
+        expect(
+          hooks.client.fetch.mock.calls.some(([query]) => query.includes('references($targetId)')),
+        ).toBe(true),
+      )
+
+      if (changedScope === 'user')
+        hooks.currentUser = {id: 'user-b', roles: [{name: 'administrator'}]}
+      if (changedScope === 'project') hooks.projectId = 'project-b'
+      if (changedScope === 'dataset') hooks.dataset = 'dataset-b'
+      if (changedScope === 'role')
+        hooks.currentUser = {
+          id: 'user-a',
+          roles: [{name: 'administrator'}, {name: 'editor'}],
+        }
+      if (changedScope === 'perspective') hooks.perspective = 'drafts'
+      rerender(<BulkDeleteComponent schemaTypes={[]} />)
+
+      resolveReferences({
+        total: 99,
+        documents: [{_id: 'stale-referrer', _type: 'article', title: 'Stale reference'}],
+      })
+      await waitFor(() => expect(hooks.referenceResults).toHaveLength(1))
+      expect(hooks.referenceResults).toEqual([null])
+      expect(screen.queryByText('Loaded references: 99')).toBeNull()
+      expect(screen.queryByText('Stale reference')).toBeNull()
+    },
+  )
 
   it('shows accessible success feedback after a confirmed deletion', async () => {
     hooks.currentUser = {id: 'user-a', roles: [{name: 'administrator'}]}

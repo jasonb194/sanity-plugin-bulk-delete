@@ -20,7 +20,7 @@ export function ConfirmDeleteDialog({
       id="confirm-delete-dialog"
       header="Confirm Deletion"
       onClose={onCancel}
-      width={1}
+      width={4}
       zOffset={1000}
       footer={
         <Flex justify="flex-end" gap={2}>
