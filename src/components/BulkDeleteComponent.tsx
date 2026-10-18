@@ -2,7 +2,11 @@ import React, {useCallback, useEffect, useRef, useState} from 'react'
 import { useCurrentUser, useClient, usePerspective } from 'sanity'
 import { Button, Card, Flex, Spinner, Stack, Text } from '@sanity/ui'
 import { defineQuery } from 'groq'
-import type { BulkDeleteToolOptions } from '../types/BulkDeleteComponent.types'
+import type {
+  BulkDeleteToolOptions,
+  StrongReferencePageRequest,
+  StrongReferencePageResult,
+} from '../types/BulkDeleteComponent.types'
 import { PermissionNotice } from './PermissionNotice'
 import { DocumentTypeSelect } from './DocumentTypeSelect'
 import { DocumentList } from './DocumentList'
@@ -37,6 +41,13 @@ const permissionError: FeedbackMessage = {
   description: 'Your permissions or Studio context changed. Select documents again before deleting.',
 }
 
+/**
+ * Checks that every selected document is still eligible for the chosen type.
+ * @param selectedDocs - Documents in the current selection.
+ * @param eligibleDocs - Documents currently returned as deletable.
+ * @param selectedType - Type selected in the document type picker.
+ * @returns Whether the selection still matches the eligible document set.
+ */
 const hasEligibleSelection = (
   selectedDocs: {_id: string; _type: string}[],
   eligibleDocs: {_id: string; _type: string}[],
@@ -82,6 +93,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   // selectedPerspective can be an object for releases in newer Studio versions.
   // selectedPerspectiveName is the stable name field shared by Studio v3-v6.
   const perspectiveMatch = getPerspectiveFilter(perspective.selectedPerspectiveName)
+  const showReferenceDetails = perspective.selectedPerspectiveName === 'published'
   const clientConfig = sanityClient.config()
   const roleNames = currentUser?.roles?.map((role: any) => role.name).sort() ?? []
   const allowedRoles = [...(config.roles ?? [])].sort()
@@ -161,6 +173,30 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
       return sanityClient.fetch(query, {type}, { perspective: 'raw' })
     },
     [perspectiveMatch, sanityClient],
+  )
+
+  /**
+   * Loads one page of referrers only while the current selection and authorization scope is valid.
+   * Returns `null` if the scope is already invalid or changes while the query is in flight.
+   */
+  const loadStrongReferences = useCallback(
+    async ({targetId, start, end}: StrongReferencePageRequest) => {
+      const requestScope = selectionScope
+      if (latestScope.current !== requestScope || !latestIsAdmin.current) return null
+
+      const query = defineQuery(
+        '{"total": count(*[references($targetId)]), "documents": *[references($targetId)] | order(_id asc) [$start...$end]{_id, _type, title, name}}',
+      )
+      const result = await sanityClient.fetch<StrongReferencePageResult>(
+        query,
+        {targetId, start, end},
+        {perspective: 'raw'},
+      )
+
+      if (latestScope.current !== requestScope || !latestIsAdmin.current) return null
+      return result
+    },
+    [sanityClient, selectionScope],
   )
 
   // Fetch all unique document types from the dataset
@@ -422,7 +458,7 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
   }
 
   return (
-    <Card padding={4} radius={3} shadow={1} style={{ maxWidth: 500, margin: '2rem auto' }}>
+    <Card padding={4} radius={3} shadow={1} style={{ width: '100%', boxSizing: 'border-box', margin: '2rem auto' }}>
       <Stack style={{gap: 16}}>
         <Text size={2} weight="semibold">
           Bulk Delete Documents
@@ -474,6 +510,9 @@ export const BulkDeleteComponent = (config: BulkDeleteToolOptions) => {
             <DocumentList
               documentsData={documentsData}
               stronglyReferencedDocs={stronglyReferencedDocs}
+              showReferenceDetails={showReferenceDetails}
+              referenceScopeKey={selectionScope}
+              loadStrongReferences={loadStrongReferences}
               isDocSelected={isDocSelected}
               handleSelectDoc={handleSelectDoc}
             />
